@@ -344,5 +344,6 @@ def inline_kb(cfg: Dict[str, Any], section: str) -> InlineKeyboardMarkup:
 
 
 def course_actions_kb(cfg: Dict[str, Any], course: Course) -> InlineKeyboardMarkup:
-    pro_contact = (cfg["meta"].get("pro_
+    pro_contact = (cfg.get("meta", {}).get("pro_contact") or PRO_CONTACT).strip()
+
 
