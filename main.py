@@ -1,13 +1,19 @@
 import asyncio
+import json
 import os
+import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from urllib.parse import quote
 
+import asyncpg
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -17,24 +23,27 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
-from dotenv import load_dotenv
 
-load_dotenv()
+# ================== ENV ==================
+BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
+OWNER_ID = int((os.getenv("OWNER_ID", "0") or "0").strip())
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+CONSULT_FORM_URL_ENV = (os.getenv("CONSULTATION_FORM_URL") or "").strip()
 
-BTN_COURSES = "Наши курсы"
-BTN_CALC = "Калькулятор OZON/ЯМ"
-BTN_PARTNERSHIP = "Сотрудничество"
-BTN_CONSULT = "Личная консультация"
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is empty.")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is empty.")
+if OWNER_ID == 0:
+    raise RuntimeError("OWNER_ID is empty/0. Set OWNER_ID in env vars.")
 
-CHANNEL_URL = "https://t.me/ozonbluerise"
-CONSULT_FORM_URL = os.getenv("CONSULTATION_FORM_URL")
+# ================== CONSTANTS (fallback) ==================
+PRO_CONTACT_FALLBACK = "ilya_bolsheglazov"
+HELP_CONTACT_FALLBACK = "yashiann"
+CHANNEL_URL_FALLBACK = "https://t.me/ozonbluerise"
 
-PRO_CONTACT = "ilya_bolsheglazov"
-HELP_CONTACT = "yashiann"
-
-
+# ================== DATA ==================
 @dataclass(frozen=True)
 class Course:
     title: str
@@ -131,375 +140,209 @@ def tg_link(username: str, text: str) -> str:
     return f"https://t.me/{username}?text={quote(text)}"
 
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_COURSES)],
-            [KeyboardButton(text=BTN_CALC)],
-            [KeyboardButton(text=BTN_PARTNERSHIP)],
-            [KeyboardButton(text=BTN_CONSULT)],
-        ],
-        resize_keyboard=True,
-    )
+# ================== DB ==================
+pool: Optional[asyncpg.Pool] = None
 
 
-def courses_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📚 Предзаписанные курсы", callback_data="courses:pre")],
-            [InlineKeyboardButton(text="🆕 Новинки и потоки", callback_data="courses:new")],
-            [InlineKeyboardButton(text="🔶 Бесплатные вебинары по ЯМ", callback_data="courses:webinars")],
-            [InlineKeyboardButton(text="❓ Помощь с выбором курса", callback_data="courses:help")],
-            [InlineKeyboardButton(text="🛠️ Техническая поддержка", callback_data="courses:support")],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="courses:back")],
-        ]
-    )
+async def db_init() -> None:
+    global pool
+    pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_kv (
+              key TEXT PRIMARY KEY,
+              value JSONB NOT NULL
+            );
+            """
+        )
 
 
-def pre_courses_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Ozon: Начальный уровень", callback_data="pre:beginner")],
-            [InlineKeyboardButton(text="⚡ Ozon: Продвинутый уровень", callback_data="pre:advanced")],
-            [InlineKeyboardButton(text="🛠️ Спецкурсы и инструменты", callback_data="pre:special")],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="pre:back")],
-        ]
-    )
+async def kv_get(key: str) -> Optional[Dict[str, Any]]:
+    assert pool is not None
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT value FROM bot_kv WHERE key=$1", key)
+        if not row:
+            return None
+        return dict(row["value"])
 
 
-def course_actions_kb(course: Course) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Узнать подробности и купить курс",
-                    url=course.link,
-                )
+async def kv_set(key: str, value: Dict[str, Any]) -> None:
+    assert pool is not None
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO bot_kv(key, value)
+            VALUES ($1, $2::jsonb)
+            ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value
+            """,
+            key,
+            json.dumps(value, ensure_ascii=False),
+        )
+
+
+# ================== CONFIG ==================
+CFG_KEY = "ui_config_v1"
+
+def default_cfg() -> Dict[str, Any]:
+    """
+    reply_buttons: тексты reply-кнопок (внизу)
+    meta: ссылки/контакты
+    inline: inline-секции (списки кнопок)
+      - callback-кнопки: type="callback", value="courses:pre" и т.п. (value НЕ редактируем в панели)
+      - url-кнопки: type="url", value="https://..." (value редактируем)
+    """
+    channel_url = CHANNEL_URL_FALLBACK
+    consult_url = CONSULT_FORM_URL_ENV  # если есть из окружения
+
+    return {
+        "reply_buttons": {
+            "courses": "Наши курсы",
+            "calc": "Калькулятор OZON/ЯМ",
+            "partnership": "Сотрудничество",
+            "consult": "Личная консультация",
+            "owner": "⚙️ Панель владельца",
+        },
+        "meta": {
+            "channel_url": channel_url,
+            "consult_form_url": consult_url,
+            "pro_contact": PRO_CONTACT_FALLBACK,
+            "help_contact": HELP_CONTACT_FALLBACK,
+            "webinar_url": "https://bluerise.getcourse.ru/teach/control/stream/view/id/934642226",
+            "calc_url": "https://docs.google.com/spreadsheets/d/1e4AVf3dDueEoPxQHeKOVFHgSpbcLvnbGnn6_I6ApRwg/edit?gid=246238448#gid=246238448",
+        },
+        "inline": {
+            "courses_menu": [
+                {"id": "pre", "text": "📚 Предзаписанные курсы", "type": "callback", "value": "courses:pre"},
+                {"id": "new", "text": "🆕 Новинки и потоки", "type": "callback", "value": "courses:new"},
+                {"id": "webinars", "text": "🔶 Бесплатные вебинары по ЯМ", "type": "callback", "value": "courses:webinars"},
+                {"id": "help", "text": "❓ Помощь с выбором курса", "type": "callback", "value": "courses:help"},
+                {"id": "support", "text": "🛠️ Техническая поддержка", "type": "callback", "value": "courses:support"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "courses:back"},
             ],
-            [
-                InlineKeyboardButton(
-                    text="Выставить счет для оплаты с р/с",
-                    url=tg_link(PRO_CONTACT, course.invoice_text),
-                )
+            "pre_courses": [
+                {"id": "beginner", "text": "🚀 Ozon: Начальный уровень", "type": "callback", "value": "pre:beginner"},
+                {"id": "advanced", "text": "⚡ Ozon: Продвинутый уровень", "type": "callback", "value": "pre:advanced"},
+                {"id": "special", "text": "🛠️ Спецкурсы и инструменты", "type": "callback", "value": "pre:special"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "pre:back"},
             ],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="pre:back")],
-        ]
-    )
-
-
-def advanced_courses_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="PRO логистику", callback_data="advanced:pro_logistics")],
-            [InlineKeyboardButton(text="PRO рекламу", callback_data="advanced:pro_ads")],
-            [InlineKeyboardButton(text="PRO Аналитику", callback_data="advanced:pro_analytics")],
-            [InlineKeyboardButton(text="PRO Финансы", callback_data="advanced:pro_finance")],
-            [InlineKeyboardButton(text="Всё про Озон", callback_data="advanced:all_about_ozon")],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="pre:back")],
-        ]
-    )
-
-
-def special_courses_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="PRO Дизайн", callback_data="special:pro_design")],
-            [InlineKeyboardButton(text="Нейросети от SXR Studio", callback_data="special:sxr_ai")],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="pre:back")],
-        ]
-    )
-
-
-def help_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Написать в поддержку",
-                    url=tg_link(HELP_CONTACT, "Добрый день. Помогите с выбором курса."),
-                )
+            "advanced_courses": [
+                {"id": "pro_logistics", "text": "PRO логистику", "type": "callback", "value": "advanced:pro_logistics"},
+                {"id": "pro_ads", "text": "PRO рекламу", "type": "callback", "value": "advanced:pro_ads"},
+                {"id": "pro_analytics", "text": "PRO Аналитику", "type": "callback", "value": "advanced:pro_analytics"},
+                {"id": "pro_finance", "text": "PRO Финансы", "type": "callback", "value": "advanced:pro_finance"},
+                {"id": "all_about_ozon", "text": "Всё про Озон", "type": "callback", "value": "advanced:all_about_ozon"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "pre:back"},
             ],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="courses:back")],
-        ]
-    )
-
-
-def tech_support_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Написать в поддержку",
-                    url=tg_link(
-                        PRO_CONTACT,
-                        "Добрый день. Возникла техническая проблема: [опишите, пожалуйста].",
-                    ),
-                )
+            "special_courses": [
+                {"id": "pro_design", "text": "PRO Дизайн", "type": "callback", "value": "special:pro_design"},
+                {"id": "sxr_ai", "text": "Нейросети от SXR Studio", "type": "callback", "value": "special:sxr_ai"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "pre:back"},
             ],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="courses:back")],
-        ]
-    )
-
-
-def webinars_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Вебинар тут",
-                    url="https://bluerise.getcourse.ru/teach/control/stream/view/id/934642226",
-                )
+            "help": [
+                {"id": "write", "text": "Написать в поддержку", "type": "url", "value": "tg://help_contact"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "courses:back"},
             ],
-            [InlineKeyboardButton(text="Подписаться на канал", url=CHANNEL_URL)],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="courses:back")],
-        ]
-    )
-
-
-def new_courses_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📚 Предзаписанные курсы", callback_data="courses:pre")],
-            [InlineKeyboardButton(text="Подписаться на канал", url=CHANNEL_URL)],
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="courses:back")],
-        ]
-    )
-
-
-def calculator_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Калькулятор здесь",
-                    url="https://docs.google.com/spreadsheets/d/1e4AVf3dDueEoPxQHeKOVFHgSpbcLvnbGnn6_I6ApRwg/edit?gid=246238448#gid=246238448",
-                )
+            "tech_support": [
+                {"id": "write", "text": "Написать в поддержку", "type": "url", "value": "tg://pro_contact"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "courses:back"},
             ],
-            [InlineKeyboardButton(text="Подписаться на канал", url=CHANNEL_URL)],
-        ]
-    )
+            "webinars": [
+                {"id": "webinar", "text": "Вебинар тут", "type": "url", "value": "meta://webinar_url"},
+                {"id": "channel", "text": "Подписаться на канал", "type": "url", "value": "meta://channel_url"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "courses:back"},
+            ],
+            "new_courses": [
+                {"id": "pre", "text": "📚 Предзаписанные курсы", "type": "callback", "value": "courses:pre"},
+                {"id": "channel", "text": "Подписаться на канал", "type": "url", "value": "meta://channel_url"},
+                {"id": "back", "text": "↩️ Назад", "type": "callback", "value": "courses:back"},
+            ],
+            "calculator": [
+                {"id": "calc", "text": "Калькулятор здесь", "type": "url", "value": "meta://calc_url"},
+                {"id": "channel", "text": "Подписаться на канал", "type": "url", "value": "meta://channel_url"},
+            ],
+            "consult": [
+                {"id": "form", "text": "📅 ЗАПОЛНИТЬ ЗАЯВКУ", "type": "url", "value": "meta://consult_form_url"},
+            ],
+        },
+    }
 
 
-def consult_kb() -> Optional[InlineKeyboardMarkup]:
-    if not CONSULT_FORM_URL:
-        return None
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📅 ЗАПОЛНИТЬ ЗАЯВКУ", url=CONSULT_FORM_URL)]
-        ]
-    )
+_CFG_CACHE: Optional[Dict[str, Any]] = None
 
 
-dp = Dispatcher()
+async def cfg_load() -> Dict[str, Any]:
+    global _CFG_CACHE
+    if _CFG_CACHE is not None:
+        return _CFG_CACHE
+    data = await kv_get(CFG_KEY)
+    if not data:
+        data = default_cfg()
+        await kv_set(CFG_KEY, data)
+    _CFG_CACHE = data
+    return data
 
 
-@dp.message(CommandStart())
-async def start(m: Message) -> None:
-    name = m.from_user.first_name if m.from_user else "друг"
-    await m.answer(
-        f"Приветствую, {name}!\n\n"
-        "Это «Синий рассвет» — здесь мы систематизируем бизнес на маркетплейсах: "
-        "от основ до продвинутых стратегий.",
-        reply_markup=main_menu_kb(),
-    )
+async def cfg_save(cfg: Dict[str, Any]) -> None:
+    global _CFG_CACHE
+    await kv_set(CFG_KEY, cfg)
+    _CFG_CACHE = cfg
 
 
-@dp.message(F.text == BTN_COURSES)
-async def courses_menu(m: Message) -> None:
-    await m.answer("Выберите раздел 👇", reply_markup=courses_menu_kb())
+def is_owner(user_id: int) -> bool:
+    return user_id == OWNER_ID
 
 
-@dp.callback_query(F.data == "courses:back")
-async def courses_back(c: CallbackQuery) -> None:
-    await c.message.answer("Главное меню 👇", reply_markup=main_menu_kb())
-    await c.answer()
+# ================== KEYBOARDS ==================
+def main_menu_kb(cfg: Dict[str, Any], user_id: int) -> ReplyKeyboardMarkup:
+    rb = cfg["reply_buttons"]
+    rows = [
+        [KeyboardButton(text=rb["courses"])],
+        [KeyboardButton(text=rb["calc"])],
+        [KeyboardButton(text=rb["partnership"])],
+        [KeyboardButton(text=rb["consult"])],
+    ]
+    if is_owner(user_id):
+        rows.append([KeyboardButton(text=rb["owner"])])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
-@dp.callback_query(F.data == "courses:pre")
-async def pre_courses(c: CallbackQuery) -> None:
-    text = (
-        "Все курсы в нашей линейке предзаписанные и с постоянными апдейтами под изменения в Озон.\n\n"
-        "Не надо ждать потоков, курс идет по принципу «Купи и смотри». Доступ к нему и ко всем его "
-        "изменениям остается навсегда.\n\n"
-        "Вся линейка курсов задумана, как постоянно обновляемая База Знаний, с помощью которых вы "
-        "сможете обучать новых сотрудников и постоянно актуализировать свои знания. Доступ ко всем "
-        "обновлениям купленного курса БЕСПЛАТНЫЙ."
-    )
-    await c.message.answer(text, reply_markup=pre_courses_kb())
-    await c.answer()
+def resolve_url(cfg: Dict[str, Any], value: str) -> str:
+    if value.startswith("meta://"):
+        key = value.split("meta://", 1)[1]
+        return (cfg.get("meta", {}).get(key) or "").strip()
+
+    if value == "tg://help_contact":
+        username = (cfg["meta"].get("help_contact") or HELP_CONTACT_FALLBACK).strip()
+        return tg_link(username, "Добрый день. Помогите с выбором курса.")
+
+    if value == "tg://pro_contact":
+        username = (cfg["meta"].get("pro_contact") or PRO_CONTACT_FALLBACK).strip()
+        return tg_link(username, "Добрый день. Возникла техническая проблема: [опишите, пожалуйста].")
+
+    return value
 
 
-@dp.callback_query(F.data == "pre:beginner")
-async def pre_beginner(c: CallbackQuery) -> None:
-    await c.message.answer(
-        f"<b>{BEGINNER_COURSE.title}</b>\n\n{BEGINNER_COURSE.description}",
-        reply_markup=course_actions_kb(BEGINNER_COURSE),
-        parse_mode=ParseMode.HTML,
-    )
-    await c.answer()
+def inline_kb(cfg: Dict[str, Any], section: str) -> InlineKeyboardMarkup:
+    items = cfg["inline"].get(section, [])
+    rows: List[List[InlineKeyboardButton]] = []
+
+    for b in items:
+        b_type = b.get("type")
+        text = b.get("text", "—")
+        val = b.get("value", "")
+
+        if b_type == "callback":
+            rows.append([InlineKeyboardButton(text=text, callback_data=val)])
+        elif b_type == "url":
+            url = resolve_url(cfg, val)
+            rows.append([InlineKeyboardButton(text=text, url=url)])
+        else:
+            rows.append([InlineKeyboardButton(text=text, callback_data="noop")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@dp.callback_query(F.data == "pre:advanced")
-async def pre_advanced(c: CallbackQuery) -> None:
-    await c.message.answer(
-        "Продвинутый уровень: выберите курс 👇",
-        reply_markup=advanced_courses_kb(),
-    )
-    await c.answer()
+def course_actions_kb(cfg: Dict[str, Any], course: Course) -> InlineKeyboardMarkup:
+    pro_contact = (cfg["meta"].get("pro_
 
-
-@dp.callback_query(F.data == "pre:special")
-async def pre_special(c: CallbackQuery) -> None:
-    await c.message.answer(
-        "Спецкурсы и инструменты: выберите курс 👇",
-        reply_markup=special_courses_kb(),
-    )
-    await c.answer()
-
-
-@dp.callback_query(F.data == "pre:back")
-async def pre_back(c: CallbackQuery) -> None:
-    await c.message.answer("Наши курсы 👇", reply_markup=courses_menu_kb())
-    await c.answer()
-
-
-@dp.callback_query(F.data.startswith("advanced:"))
-async def advanced_course(c: CallbackQuery) -> None:
-    key = c.data.split(":", 1)[1]
-    course = ADVANCED_COURSES.get(key)
-    if not course:
-        await c.answer("Курс не найден.", show_alert=True)
-        return
-    await c.message.answer(
-        f"<b>{course.title}</b>\n\n{course.description}",
-        reply_markup=course_actions_kb(course),
-        parse_mode=ParseMode.HTML,
-    )
-    await c.answer()
-
-
-@dp.callback_query(F.data.startswith("special:"))
-async def special_course(c: CallbackQuery) -> None:
-    key = c.data.split(":", 1)[1]
-    course = SPECIAL_COURSES.get(key)
-    if not course:
-        await c.answer("Курс не найден.", show_alert=True)
-        return
-    await c.message.answer(
-        f"<b>{course.title}</b>\n\n{course.description}",
-        reply_markup=course_actions_kb(course),
-        parse_mode=ParseMode.HTML,
-    )
-    await c.answer()
-
-
-@dp.callback_query(F.data == "courses:new")
-async def courses_new(c: CallbackQuery) -> None:
-    text = (
-        "Здесь будут появляться анонсы новых курсов и специальных форматов обучения.\n\n"
-        "Мы регулярно работаем над тем, чтобы обучение было еще полезнее и эффективнее. "
-        "Возможно, это будут обновленные программы или новые проекты.\n\n"
-        "Хотите быть в курсе всех новинок первыми?\n"
-        f"👉 Подпишитесь на наш канал: {CHANNEL_URL}\n\n"
-        "А пока все наши основные курсы для старта и уверенного роста уже ждут вас в "
-        "📚 Предзаписанные курсы."
-    )
-    await c.message.answer(text, reply_markup=new_courses_kb())
-    await c.answer()
-
-
-@dp.callback_query(F.data == "courses:webinars")
-async def courses_webinars(c: CallbackQuery) -> None:
-    text = (
-        "Поздравляю! Вам открыт доступ к вебинарам по Яндекс маркету.\n\n"
-        "Что вы получите внутри:\n"
-        "1. Запись 3-х дней вебинаров по ЯМ, в которых разобраны все аспекты работы с площадкой.\n"
-        "2. Ссылка на чат единомышленников.\n\n"
-        "Кстати, подписывайтесь на мой канал «Синий рассвет» — там куча полезной информации "
-        "по Озон и про бизнес на маркетплейсах в целом."
-    )
-    await c.message.answer(text, reply_markup=webinars_kb())
-    await c.answer()
-
-
-@dp.callback_query(F.data == "courses:help")
-async def courses_help(c: CallbackQuery) -> None:
-    text = (
-        "Чтобы подобрать курс, который решит именно вашу задачу, напишите напрямую "
-        "@yashiann. Опишите ваш опыт и цель — и вы получите персональную рекомендацию."
-    )
-    await c.message.answer(text, reply_markup=help_kb())
-    await c.answer()
-
-
-@dp.callback_query(F.data == "courses:support")
-async def courses_support(c: CallbackQuery) -> None:
-    text = (
-        "По любым техническим вопросам (доступ к курсам, проблемы с оплатой) "
-        "напишите напрямую @ilya_bolsheglazov. Опишите проблему как можно подробнее — "
-        "это поможет решить её быстрее."
-    )
-    await c.message.answer(text, reply_markup=tech_support_kb())
-    await c.answer()
-
-
-@dp.message(F.text == BTN_CALC)
-async def calculator(m: Message) -> None:
-    text = (
-        "Поздравляю! Вам открыт доступ к обновленному калькулятору.\n\n"
-        "Что вы получите внутри:\n"
-        "1. Калькулятор с FBS и новой логистикой.\n"
-        "2. Подробное видеообъяснение к калькулятору: как пользоваться, что ввести, на что смотреть.\n\n"
-        "Кстати, подписывайтесь на мой канал «Синий рассвет». Там куча полезной информации по Озон "
-        "и про бизнес на маркетплейсах в целом."
-    )
-    await m.answer(text, reply_markup=calculator_kb())
-
-
-@dp.message(F.text == BTN_PARTNERSHIP)
-async def partnership(m: Message) -> None:
-    text = (
-        "Привет! 👋\n\n"
-        "Этот раздел — для обсуждения профессионального партнёрства. Мы открыты к совместным "
-        "проектам, интеграциям, аффилированным программам и другим форматам взаимовыгодного "
-        "сотрудничества.\n\n"
-        "Чтобы предложить свою идею, напишите напрямую @yashiann в Telegram. В первом сообщении "
-        "кратко опишите суть предложения — это поможет начать диалог максимально предметно.\n\n"
-        "Жду вашего сообщения! 🤝"
-    )
-    await m.answer(text, reply_markup=ReplyKeyboardRemove())
-
-
-@dp.message(F.text == BTN_CONSULT)
-async def consult(m: Message) -> None:
-    text = (
-        "Индивидуальный разбор вашего кейса. Мы проанализируем текущую ситуацию, определим точки "
-        "роста и сформируем план на ближайший период.\n\n"
-        "Формат и продолжительность консультации определяются под ваш запрос.\n\n"
-        "Для записи заполните, пожалуйста, форму. Это поможет подготовиться к нашей встрече."
-    )
-    kb = consult_kb()
-    if kb:
-        await m.answer(text, reply_markup=kb)
-        return
-    await m.answer(
-        f"{text}\n\nСсылка на форму пока не указана. Добавьте CONSULTATION_FORM_URL в окружение.",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-
-@dp.message()
-async def fallback(m: Message) -> None:
-    await m.answer("Используйте меню ниже 👇", reply_markup=main_menu_kb())
-
-
-async def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is empty. Set it in environment variables.")
-
-    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
