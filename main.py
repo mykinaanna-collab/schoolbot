@@ -5,6 +5,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -80,7 +81,7 @@ ADVANCED_COURSES = {
             "инструменты, которые необходимы для анализа."
         ),
         link="https://bluerise.getcourse.ru/PRO_Analytics",
-        invoice_text="Здравствуйте, мне нужен счет для оплаты курса «PRO Аналитику».",
+        invoice_text="Здравствуйте, мне нужен счет для оплаты курса «PRO Аналитик».",
     ),
     "pro_finance": Course(
         title="PRO Финансы",
@@ -460,7 +461,7 @@ async def partnership(m: Message) -> None:
     text = (
         "Привет! 👋\n\n"
         "Этот раздел — для обсуждения профессионального партнёрства. Мы открыты к совместным "
-        "проектам, интеграциям, аффилированным программам и другим форматам взаимовыгодого "
+        "проектам, интеграциям, аффилированным программам и другим форматам взаимовыгодного "
         "сотрудничества.\n\n"
         "Чтобы предложить свою идею, напишите напрямую @yashiann в Telegram. В первом сообщении "
         "кратко опишите суть предложения — это поможет начать диалог максимально предметно.\n\n"
@@ -496,7 +497,7 @@ async def main() -> None:
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is empty. Set it in environment variables.")
 
-    bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
+    bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await dp.start_polling(bot)
 
 
