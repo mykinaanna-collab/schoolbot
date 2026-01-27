@@ -9,6 +9,8 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -24,6 +26,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 
+CHANNEL_URL = "https://t.me/ozonbluerise"
+CONSULT_FORM_URL = os.getenv("CONSULTATION_FORM_URL", "https://example.com")
+HELP_CONTACT = "yashiann"
+INVOICE_CONTACT = "ilya_bolsheglazov"
+
 DEFAULT_ROOT_TEXT = (
     "Приветствую, {name}!\n\n"
     "Это «Синий рассвет» — здесь мы систематизируем бизнес на маркетплейсах: "
@@ -32,6 +39,31 @@ DEFAULT_ROOT_TEXT = (
 
 dp = Dispatcher()
 POOL: Optional[asyncpg.Pool] = None
+
+
+class EditTextFlow(StatesGroup):
+    slug = State()
+    text = State()
+
+
+class AddButtonFlow(StatesGroup):
+    slug = State()
+    label = State()
+    action = State()
+    target = State()
+    position = State()
+
+
+class EditButtonFlow(StatesGroup):
+    button_id = State()
+    label = State()
+    action = State()
+    target = State()
+    position = State()
+
+
+class DeleteButtonFlow(StatesGroup):
+    button_id = State()
 
 
 @dataclass(frozen=True)
@@ -96,30 +128,110 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
     nodes = [
         ("courses", "Выберите раздел 👇"),
         (
+            "pre_courses",
+            "Все курсы в нашей линейке предзаписанные и с постоянными апдейтами под изменения в Озон.\n\n"
+            "Не надо ждать потоков, курс идет по принципу «упи и смотри». Доступ к нему и ко всем его "
+            "изменениям остается навсегда.\n\n"
+            "Вся линейка курсов задумана, как постоянно обновляемая База Знаний, с помощью которых вы "
+            "сможете обучать новых сотрудников и постоянно актуализировать свои знания. Доступ ко всем "
+            "обновлениям купленного курса БЕСПЛАТНЫЙ.",
+        ),
+        (
+            "beginner_course",
+            "«Грамотный старт на Озон» — для селлеров и менеджеров, которые делают первые шаги в Озон "
+            "и хотят начать уверенно разбираться во всех основных вещах, необходимых для ведения прибыльного бизнеса.",
+        ),
+        (
+            "advanced_courses",
+            "Продвинутый уровень: выберите курс 👇",
+        ),
+        (
+            "pro_logistics",
+            "Курс PRO логистику для тех, кто хочет снизить СВД в своем кабинете, понимать сколько товара "
+            "грузить в каждый кластер и понять, как не переплачивать за логистику.",
+        ),
+        (
+            "pro_ads",
+            "Курс PRO рекламу — для тех, кто хочет оптимизировать свои рекламные расходы, научиться выстраивать "
+            "рекламные стратегии и понимать, какими инструментами продвижения пользоваться для разных типов товаров "
+            "и в различных ситуациях.",
+        ),
+        (
+            "pro_analytics",
+            "Курс PRO Аналитику — для тех, кто хочет изучить все значимые нюансы и все инструменты, которые необходимы для анализа.",
+        ),
+        (
+            "pro_finance",
+            "Курс «PRO Финансы» — для тех, кто хочет научиться считать юнит-план и юнит-факт, ROI и маржинальность. "
+            "Разбираться в финансовых отчетах Озона, иметь представление о кредитных инструментах.",
+        ),
+        (
+            "all_about_ozon",
+            "Все 4 блока курсов PRO логистику, PRO рекламу, PRO аналитику, PRO финансы в одном со скидкой 20%.",
+        ),
+        (
+            "special_courses",
+            "Спецкурсы и инструменты: выберите курс 👇",
+        ),
+        (
+            "pro_design",
+            "Курс «PRO Дизайн» — для тех, кто хочет понять принципы продающей инфографики, уберечь себя от ошибок "
+            "в дизайне карточек товара, которые ведут к снижению CTR, научиться выстраивать взаимоотношения с дизайнерами "
+            "и «считывать» их квалификацию.",
+        ),
+        (
+            "sxr_ai",
+            "Курс по нейросетям от SXR Studio для тех, кто смотрит в будущее и хочет научиться генерировать нейро-контент "
+            "для своих карточек товара.",
+        ),
+        (
+            "new_courses",
+            "Здесь будут появляться анонсы новых курсов и специальных форматов обучения.\n\n"
+            "Мы регулярно работаем над тем, чтобы обучение было еще полезнее и эффективнее. Возможно, это будут обновленные "
+            "программы или новые проекты.\n\n"
+            "Хотите быть в курсе всех новинок первыми?\n"
+            f"👉 Подпишитесь на наш канал: {CHANNEL_URL}\n\n"
+            "А пока все наши основные курсы для старта и уверенного роста уже ждут вас в 📚 Предзаписанные курсы.",
+        ),
+        (
+            "webinars",
+            "Поздравляю! Вам открыт доступ к вебинарам по Яндекс маркету.\n\n"
+            "Что вы получите внутри:\n"
+            "1. Запись 3-х дней вебинаров по ЯМ, в которых разобраны все аспекты работы с площадкой.\n"
+            "2. Ссылка на чат единомышленников.\n\n"
+            "Кстати, подписывайтесь на мой канал «Синий рассвет» — там куча полезной информации по Озон и про бизнес на маркетплейсах в целом.",
+        ),
+        (
+            "help",
+            "Чтобы подобрать курс, который решит именно вашу задачу, напишите напрямую @yashiann. Опишите ваш опыт и цель — "
+            "и вы получите персональную рекомендацию.",
+        ),
+        (
+            "support",
+            "По любым техническим вопросам (доступ к курсам, проблемы с оплатой) напишите напрямую @ilya_bolsheglazov. "
+            "Опишите проблему как можно подробнее — это поможет решить её быстрее.",
+        ),
+        (
             "calculator",
             "Поздравляю! Вам открыт доступ к обновленному калькулятору.\n\n"
             "Что вы получите внутри:\n"
             "1. Калькулятор с FBS и новой логистикой.\n"
-            "2. Подробное видеообъяснение к калькулятору: как пользоваться, что ввести, "
-            "на что смотреть.\n\n"
-            "Кстати, подписывайтесь на мой канал «Синий рассвет». Там куча полезной "
-            "информации по Озон и про бизнес на маркетплейсах в целом.",
+            "2. Подробное видеообъяснение к калькулятору: как пользоваться, что ввести, на что смотреть.\n\n"
+            "Кстати, подписывайтесь на мой канал «Синий рассвет». Там куча полезной информации по Озон и про бизнес на маркетплейсах в целом.",
         ),
         (
             "partnership",
             "Привет! 👋\n\n"
-            "Этот раздел — для обсуждения профессионального партнёрства. Мы открыты к "
-            "совместным проектам, интеграциям, аффилированным программам и другим форматам "
-            "взаимовыгодного сотрудничества.\n\n"
-            "Чтобы предложить свою идею, напишите напрямую @yashiann в Telegram. В первом "
-            "сообщении кратко опишите суть предложения — это поможет начать диалог максимально "
-            "предметно.\n\n"
+            "Этот раздел — для обсуждения профессионального партнёрства. Мы открыты к совместным проектам, интеграциям, "
+            "аффилированным программам и другим форматам взаимовыгодного сотрудничества.\n\n"
+            "Чтобы предложить свою идею, напишите напрямую @yashiann в Telegram. В первом сообщении кратко опишите суть "
+            "предложения — это поможет начать диалог максимально предметно.\n\n"
             "Жду вашего сообщения! 🤝",
         ),
         (
             "consult",
-            "Индивидуальный разбор вашего кейса. Мы проанализируем текущую ситуацию, "
-            "определим точки роста и сформируем план на ближайший период.\n\n"
+            "Индивидуальный разбор вашего кейса. Мы проанализируем текущую ситуацию, определим точки роста и сформируем план "
+            "на ближайший период.\n\n"
             "Формат и продолжительность консультации определяются под ваш запрос.\n\n"
             "Для записи заполните, пожалуйста, форму. Это поможет подготовиться к нашей встрече.",
         ),
@@ -144,27 +256,66 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
             (root_id, "Калькулятор OZON/ЯМ", "node", "calculator", 2),
             (root_id, "Сотрудничество", "node", "partnership", 3),
             (root_id, "Личная консультация", "node", "consult", 4),
-            (
-                node_ids["calculator"],
-                "Калькулятор здесь",
-                "url",
-                "https://docs.google.com/spreadsheets/d/1e4AVf3dDueEoPxQHeKOVFHgSpbcLvnbGnn6_I6ApRwg/edit?gid=246238448#gid=246238448",
-                1,
-            ),
-            (
-                node_ids["calculator"],
-                "Подписаться на канал",
-                "url",
-                "https://t.me/ozonbluerise",
-                2,
-            ),
-            (
-                node_ids["consult"],
-                "📅 ЗАПОЛНИТЬ ЗАЯВКУ",
-                "url",
-                "https://example.com",
-                1,
-            ),
+            (node_ids["courses"], "📚 Предзаписанные курсы", "node", "pre_courses", 1),
+            (node_ids["courses"], "🆕 Новинки и потоки", "node", "new_courses", 2),
+            (node_ids["courses"], "🔶 Бесплатные вебинары по ЯМ", "node", "webinars", 3),
+            (node_ids["courses"], "❓ Помощь с выбором курса", "node", "help", 4),
+            (node_ids["courses"], "🛠️ Техническая поддержка", "node", "support", 5),
+            (node_ids["courses"], "⬅️ Назад", "node", "root", 6),
+            (node_ids["pre_courses"], "🚀 Ozon: Начальный уровень", "node", "beginner_course", 1),
+            (node_ids["pre_courses"], "⚡ Ozon: Продвинутый уровень", "node", "advanced_courses", 2),
+            (node_ids["pre_courses"], "🛠️ Спецкурсы и инструменты", "node", "special_courses", 3),
+            (node_ids["pre_courses"], "⬅️ Назад", "node", "courses", 4),
+            (node_ids["beginner_course"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/GSO_VC", 1),
+            (node_ids["beginner_course"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «Грамотный старт на Озон»."), 2),
+            (node_ids["beginner_course"], "⬅️ Назад", "node", "pre_courses", 3),
+            (node_ids["advanced_courses"], "PRO логистику", "node", "pro_logistics", 1),
+            (node_ids["advanced_courses"], "PRO рекламу", "node", "pro_ads", 2),
+            (node_ids["advanced_courses"], "PRO Аналитику", "node", "pro_analytics", 3),
+            (node_ids["advanced_courses"], "PRO Финансы", "node", "pro_finance", 4),
+            (node_ids["advanced_courses"], "Всё про Озон", "node", "all_about_ozon", 5),
+            (node_ids["advanced_courses"], "⬅️ Назад", "node", "pre_courses", 6),
+            (node_ids["pro_logistics"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_logistics", 1),
+            (node_ids["pro_logistics"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO логистику»."), 2),
+            (node_ids["pro_logistics"], "⬅️ Назад", "node", "advanced_courses", 3),
+            (node_ids["pro_ads"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Reklamu", 1),
+            (node_ids["pro_ads"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO рекламу»."), 2),
+            (node_ids["pro_ads"], "⬅️ Назад", "node", "advanced_courses", 3),
+            (node_ids["pro_analytics"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Analytics", 1),
+            (node_ids["pro_analytics"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Аналитику»."), 2),
+            (node_ids["pro_analytics"], "⬅️ Назад", "node", "advanced_courses", 3),
+            (node_ids["pro_finance"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Finance", 1),
+            (node_ids["pro_finance"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Финансы»."), 2),
+            (node_ids["pro_finance"], "⬅️ Назад", "node", "advanced_courses", 3),
+            (node_ids["all_about_ozon"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/all_about_ozon", 1),
+            (node_ids["all_about_ozon"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты комплекта «Всё про Озон»."), 2),
+            (node_ids["all_about_ozon"], "⬅️ Назад", "node", "advanced_courses", 3),
+            (node_ids["special_courses"], "PRO Дизайн", "node", "pro_design", 1),
+            (node_ids["special_courses"], "Нейросети от SXR Studio", "node", "sxr_ai", 2),
+            (node_ids["special_courses"], "⬅️ Назад", "node", "pre_courses", 3),
+            (node_ids["pro_design"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_design", 1),
+            (node_ids["pro_design"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Дизайн»."), 2),
+            (node_ids["pro_design"], "⬅️ Назад", "node", "special_courses", 3),
+            (node_ids["sxr_ai"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/SXR_AI", 1),
+            (node_ids["sxr_ai"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «Нейросети от SXR Studio»."), 2),
+            (node_ids["sxr_ai"], "⬅️ Назад", "node", "special_courses", 3),
+            (node_ids["new_courses"], "📚 Предзаписанные курсы", "node", "pre_courses", 1),
+            (node_ids["new_courses"], "Подписаться на канал", "url", CHANNEL_URL, 2),
+            (node_ids["new_courses"], "⬅️ Назад", "node", "courses", 3),
+            (node_ids["webinars"], "Вебинар тут", "url", "https://bluerise.getcourse.ru/teach/control/stream/view/id/934642226", 1),
+            (node_ids["webinars"], "Подписаться на канал", "url", CHANNEL_URL, 2),
+            (node_ids["webinars"], "⬅️ Назад", "node", "courses", 3),
+            (node_ids["help"], "Написать в поддержку", "url", tg_link(HELP_CONTACT, "Добрый день. Помогите с выбором курса."), 1),
+            (node_ids["help"], "⬅️ Назад", "node", "courses", 2),
+            (node_ids["support"], "Написать в поддержку", "url", tg_link(INVOICE_CONTACT, "Добрый день. Возникла техническая проблема: [опишите, пожалуйста]."), 1),
+            (node_ids["support"], "⬅️ Назад", "node", "courses", 2),
+            (node_ids["calculator"], "Калькулятор здесь", "url", "https://docs.google.com/spreadsheets/d/1e4AVf3dDueEoPxQHeKOVFHgSpbcLvnbGnn6_I6ApRwg/edit?gid=246238448#gid=246238448", 1),
+            (node_ids["calculator"], "Подписаться на канал", "url", CHANNEL_URL, 2),
+            (node_ids["calculator"], "⬅️ Назад", "node", "root", 3),
+            (node_ids["partnership"], "Написать в Telegram", "url", tg_link(HELP_CONTACT, "Здравствуйте! Хочу обсудить сотрудничество."), 1),
+            (node_ids["partnership"], "⬅️ Назад", "node", "root", 2),
+            (node_ids["consult"], "📅 ЗАПОЛНИТЬ ЗАЯВКУ", "url", CONSULT_FORM_URL, 1),
+            (node_ids["consult"], "⬅️ Назад", "node", "root", 2),
         ],
     )
 
@@ -217,6 +368,18 @@ def build_kb(buttons: Iterable[Button]) -> Optional[InlineKeyboardMarkup]:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def admin_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Разделы", callback_data="admin:sections")],
+            [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="admin:edit_text")],
+            [InlineKeyboardButton(text="➕ Добавить кнопку", callback_data="admin:add_button")],
+            [InlineKeyboardButton(text="🔧 Изменить кнопку", callback_data="admin:edit_button")],
+            [InlineKeyboardButton(text="🗑 Удалить кнопку", callback_data="admin:delete_button")],
+        ]
+    )
+
+
 @dp.message(CommandStart())
 async def start(m: Message) -> None:
     name = m.from_user.first_name if m.from_user else "друг"
@@ -246,7 +409,7 @@ async def admin_help(m: Message) -> None:
     if not is_owner(m.from_user.id):
         return
     await m.answer(
-        "Админ-команды:\n"
+        "Админ-режим. Выберите действие или используйте команды ниже:\n"
         "/nodes — список разделов\n"
         "/node <slug> — показать раздел и кнопки\n"
         "/addnode <slug> <text> — создать раздел\n"
@@ -254,8 +417,295 @@ async def admin_help(m: Message) -> None:
         "/settext <slug> <text> — обновить текст раздела\n"
         "/addbtn <slug> <label> | <node:slug|url:https://...> | [position]\n"
         "/setbtn <id> <label> | <node:slug|url:https://...> | [position]\n"
-        "/delbtn <id> — удалить кнопку",
+        "/delbtn <id> — удалить кнопку\n\n"
+        "Чтобы выйти из пошагового режима: /cancel",
+        reply_markup=admin_menu_kb(),
     )
+
+
+@dp.message(F.text == "/cancel")
+async def cancel_flow(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.clear()
+    await m.answer("Готово, сбросила шаги.")
+
+
+@dp.callback_query(F.data == "admin:sections")
+async def admin_sections(c: CallbackQuery) -> None:
+    if not is_owner(c.from_user.id):
+        return
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        rows = await conn.fetch("SELECT slug FROM nodes ORDER BY slug")
+    if not rows:
+        await c.message.answer("Разделов нет.")
+    else:
+        await c.message.answer("Разделы:\n" + "\n".join(row["slug"] for row in rows))
+    await c.answer()
+
+
+@dp.callback_query(F.data == "admin:edit_text")
+async def admin_edit_text(c: CallbackQuery, state: FSMContext) -> None:
+    if not is_owner(c.from_user.id):
+        return
+    await state.set_state(EditTextFlow.slug)
+    await c.message.answer("Напишите slug раздела для изменения текста:")
+    await c.answer()
+
+
+@dp.message(EditTextFlow.slug)
+async def admin_edit_text_slug(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    slug = (m.text or "").strip()
+    node = await fetch_node(slug)
+    if not node:
+        await m.answer("Раздел не найден. Укажите другой slug.")
+        return
+    await state.update_data(slug=slug)
+    await state.set_state(EditTextFlow.text)
+    await m.answer("Напишите новый текст раздела:")
+
+
+@dp.message(EditTextFlow.text)
+async def admin_edit_text_text(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    data = await state.get_data()
+    slug = data.get("slug")
+    if not slug:
+        await state.clear()
+        await m.answer("Не вижу slug. Начните заново.")
+        return
+    text = (m.text or "").strip()
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        await conn.execute("UPDATE nodes SET text=$1 WHERE slug=$2", text, slug)
+    await state.clear()
+    await m.answer("Текст обновлён.")
+
+
+@dp.callback_query(F.data == "admin:add_button")
+async def admin_add_button(c: CallbackQuery, state: FSMContext) -> None:
+    if not is_owner(c.from_user.id):
+        return
+    await state.set_state(AddButtonFlow.slug)
+    await c.message.answer("Введите slug раздела, куда добавить кнопку:")
+    await c.answer()
+
+
+@dp.message(AddButtonFlow.slug)
+async def admin_add_button_slug(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    slug = (m.text or "").strip()
+    if not await fetch_node(slug):
+        await m.answer("Раздел не найден. Попробуйте снова.")
+        return
+    await state.update_data(slug=slug)
+    await state.set_state(AddButtonFlow.label)
+    await m.answer("Введите текст кнопки:")
+
+
+@dp.message(AddButtonFlow.label)
+async def admin_add_button_label(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    label = (m.text or "").strip()
+    await state.update_data(label=label)
+    await state.set_state(AddButtonFlow.action)
+    await m.answer("Введите тип кнопки: node или url")
+
+
+@dp.message(AddButtonFlow.action)
+async def admin_add_button_action(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    action = (m.text or "").strip().lower()
+    if action not in {"node", "url"}:
+        await m.answer("Нужно указать node или url.")
+        return
+    await state.update_data(action=action)
+    await state.set_state(AddButtonFlow.target)
+    await m.answer("Введите цель (slug раздела или ссылку):")
+
+
+@dp.message(AddButtonFlow.target)
+async def admin_add_button_target(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    target = (m.text or "").strip()
+    data = await state.get_data()
+    action = data.get("action")
+    if action == "node" and not await fetch_node(target):
+        await m.answer("Целевой раздел не найден. Введите другой slug.")
+        return
+    await state.update_data(target=target)
+    await state.set_state(AddButtonFlow.position)
+    await m.answer("Введите позицию кнопки (число) или отправьте 0:")
+
+
+@dp.message(AddButtonFlow.position)
+async def admin_add_button_position(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    raw = (m.text or "").strip()
+    if not raw.isdigit():
+        await m.answer("Нужно число. Попробуйте снова.")
+        return
+    position = int(raw)
+    data = await state.get_data()
+    slug = data.get("slug")
+    label = data.get("label")
+    action = data.get("action")
+    target = data.get("target")
+    if not all([slug, label, action, target]):
+        await state.clear()
+        await m.answer("Данные потерялись. Начните заново.")
+        return
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        node_id = await conn.fetchval("SELECT id FROM nodes WHERE slug=$1", slug)
+        await conn.execute(
+            """
+            INSERT INTO buttons (node_id, label, action_type, target, position)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            node_id,
+            label,
+            action,
+            target,
+            position,
+        )
+    await state.clear()
+    await m.answer("Кнопка добавлена.")
+
+
+@dp.callback_query(F.data == "admin:edit_button")
+async def admin_edit_button(c: CallbackQuery, state: FSMContext) -> None:
+    if not is_owner(c.from_user.id):
+        return
+    await state.set_state(EditButtonFlow.button_id)
+    await c.message.answer("Введите ID кнопки (его видно в /node <slug>):")
+    await c.answer()
+
+
+@dp.message(EditButtonFlow.button_id)
+async def admin_edit_button_id(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    raw = (m.text or "").strip()
+    if not raw.isdigit():
+        await m.answer("Нужно число ID.")
+        return
+    await state.update_data(button_id=int(raw))
+    await state.set_state(EditButtonFlow.label)
+    await m.answer("Введите новый текст кнопки:")
+
+
+@dp.message(EditButtonFlow.label)
+async def admin_edit_button_label(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.update_data(label=(m.text or "").strip())
+    await state.set_state(EditButtonFlow.action)
+    await m.answer("Введите тип кнопки: node или url")
+
+
+@dp.message(EditButtonFlow.action)
+async def admin_edit_button_action(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    action = (m.text or "").strip().lower()
+    if action not in {"node", "url"}:
+        await m.answer("Нужно указать node или url.")
+        return
+    await state.update_data(action=action)
+    await state.set_state(EditButtonFlow.target)
+    await m.answer("Введите цель (slug раздела или ссылку):")
+
+
+@dp.message(EditButtonFlow.target)
+async def admin_edit_button_target(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    target = (m.text or "").strip()
+    data = await state.get_data()
+    action = data.get("action")
+    if action == "node" and not await fetch_node(target):
+        await m.answer("Целевой раздел не найден. Введите другой slug.")
+        return
+    await state.update_data(target=target)
+    await state.set_state(EditButtonFlow.position)
+    await m.answer("Введите позицию кнопки (число) или отправьте 0:")
+
+
+@dp.message(EditButtonFlow.position)
+async def admin_edit_button_position(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    raw = (m.text or "").strip()
+    if not raw.isdigit():
+        await m.answer("Нужно число. Попробуйте снова.")
+        return
+    position = int(raw)
+    data = await state.get_data()
+    button_id = data.get("button_id")
+    label = data.get("label")
+    action = data.get("action")
+    target = data.get("target")
+    if button_id is None or not all([label, action, target]):
+        await state.clear()
+        await m.answer("Данные потерялись. Начните заново.")
+        return
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        res = await conn.execute(
+            """
+            UPDATE buttons
+            SET label=$1, action_type=$2, target=$3, position=$4
+            WHERE id=$5
+            """,
+            label,
+            action,
+            target,
+            position,
+            button_id,
+        )
+    await state.clear()
+    if res.endswith("0"):
+        await m.answer("Кнопка не найдена.")
+        return
+    await m.answer("Кнопка обновлена.")
+
+
+@dp.callback_query(F.data == "admin:delete_button")
+async def admin_delete_button(c: CallbackQuery, state: FSMContext) -> None:
+    if not is_owner(c.from_user.id):
+        return
+    await state.set_state(DeleteButtonFlow.button_id)
+    await c.message.answer("Введите ID кнопки для удаления:")
+    await c.answer()
+
+
+@dp.message(DeleteButtonFlow.button_id)
+async def admin_delete_button_id(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    raw = (m.text or "").strip()
+    if not raw.isdigit():
+        await m.answer("Нужно число ID.")
+        return
+    btn_id = int(raw)
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        res = await conn.execute("DELETE FROM buttons WHERE id=$1", btn_id)
+    await state.clear()
+    if res.endswith("0"):
+        await m.answer("Кнопка не найдена.")
+        return
+    await m.answer("Кнопка удалена.")
 
 
 @dp.message(F.text == "/nodes")
