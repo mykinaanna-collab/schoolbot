@@ -15,6 +15,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from aiohttp import web
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -111,7 +112,7 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
             "совместным проектам, интеграциям, аффилированным программам и другим форматам "
             "взаимовыгодного сотрудничества.\n\n"
             "Чтобы предложить свою идею, напишите напрямую @yashiann в Telegram. В первом "
-            "сообщении крако опишите суть предложения — это поможет начать диалог максимально "
+            "сообщении кратко опишите суть предложения — это поможет начать диалог максимально "
             "предметно.\n\n"
             "Жду вашего сообщения! 🤝",
         ),
@@ -326,7 +327,7 @@ async def del_node(m: Message) -> None:
     if res.endswith("0"):
         await m.answer("Раздел не найден.")
         return
-    await m.answer(f"Радел {slug} удалён.")
+    await m.answer(f"Раздел {slug} удалён.")
 
 
 @dp.message(F.text.startswith("/settext "))
@@ -478,7 +479,24 @@ async def main() -> None:
     await init_db()
 
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    await dp.start_polling(bot)
+
+    app = web.Application()
+
+    async def health(_: web.Request) -> web.Response:
+        return web.Response(text="ok")
+
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", "10000"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await runner.cleanup()
 
 
 if __name__ == "__main__":
