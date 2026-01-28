@@ -15,7 +15,10 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 from aiohttp import web
 from dotenv import load_dotenv
@@ -130,7 +133,7 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
         (
             "pre_courses",
             "Все курсы в нашей линейке предзаписанные и с постоянными апдейтами под изменения в Озон.\n\n"
-            "Не надо ждать потоков, курс идет по принципу «упи и смотри». Доступ к нему и ко всем его "
+            "Не надо ждать потоков, курс идет по принципу «Купи и смотри». Доступ к нему и ко всем его "
             "изменениям остается навсегда.\n\n"
             "Вся линейка курсов задумана, как постоянно обновляемая База Знаний, с помощью которых вы "
             "сможете обучать новых сотрудников и постоянно актуализировать свои знания. Доступ ко всем "
@@ -380,6 +383,26 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
+def admin_reply_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="📄 Разделы"),
+                KeyboardButton(text="✏️ Изменить текст"),
+            ],
+            [
+                KeyboardButton(text="➕ Добавить кнопку"),
+                KeyboardButton(text="🔧 Изменить кнопку"),
+            ],
+            [
+                KeyboardButton(text="🗑 Удалить кнопку"),
+                KeyboardButton(text="❌ Сброс"),
+            ],
+        ],
+        resize_keyboard=True,
+    )
+
+
 @dp.message(CommandStart())
 async def start(m: Message) -> None:
     name = m.from_user.first_name if m.from_user else "друг"
@@ -419,7 +442,7 @@ async def admin_help(m: Message) -> None:
         "/setbtn <id> <label> | <node:slug|url:https://...> | [position]\n"
         "/delbtn <id> — удалить кнопку\n\n"
         "Чтобы выйти из пошагового режима: /cancel",
-        reply_markup=admin_menu_kb(),
+        reply_markup=admin_reply_kb(),
     )
 
 
@@ -428,7 +451,7 @@ async def cancel_flow(m: Message, state: FSMContext) -> None:
     if not is_owner(m.from_user.id):
         return
     await state.clear()
-    await m.answer("Готово, сбросила шаги.")
+    await m.answer("Готово, сбросила шаги.", reply_markup=ReplyKeyboardRemove())
 
 
 @dp.callback_query(F.data == "admin:sections")
@@ -445,6 +468,19 @@ async def admin_sections(c: CallbackQuery) -> None:
     await c.answer()
 
 
+@dp.message(F.text == "📄 Разделы")
+async def admin_sections_text(m: Message) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        rows = await conn.fetch("SELECT slug FROM nodes ORDER BY slug")
+    if not rows:
+        await m.answer("Разделов нет.")
+        return
+    await m.answer("Разделы:\n" + "\n".join(row["slug"] for row in rows))
+
+
 @dp.callback_query(F.data == "admin:edit_text")
 async def admin_edit_text(c: CallbackQuery, state: FSMContext) -> None:
     if not is_owner(c.from_user.id):
@@ -452,6 +488,14 @@ async def admin_edit_text(c: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(EditTextFlow.slug)
     await c.message.answer("Напишите slug раздела для изменения текста:")
     await c.answer()
+
+
+@dp.message(F.text == "✏️ Изменить текст")
+async def admin_edit_text_text(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.set_state(EditTextFlow.slug)
+    await m.answer("Напишите slug раздела для изменения текста:")
 
 
 @dp.message(EditTextFlow.slug)
@@ -493,6 +537,14 @@ async def admin_add_button(c: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddButtonFlow.slug)
     await c.message.answer("Введите slug раздела, куда добавить кнопку:")
     await c.answer()
+
+
+@dp.message(F.text == "➕ Добавить кнопку")
+async def admin_add_button_text(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.set_state(AddButtonFlow.slug)
+    await m.answer("Введите slug раздела, куда добавить кнопку:")
 
 
 @dp.message(AddButtonFlow.slug)
@@ -589,6 +641,14 @@ async def admin_edit_button(c: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(EditButtonFlow.button_id)
     await c.message.answer("Введите ID кнопки (его видно в /node <slug>):")
     await c.answer()
+
+
+@dp.message(F.text == "🔧 Изменить кнопку")
+async def admin_edit_button_text(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.set_state(EditButtonFlow.button_id)
+    await m.answer("Введите ID кнопки (его видно в /node <slug>):")
 
 
 @dp.message(EditButtonFlow.button_id)
@@ -689,6 +749,14 @@ async def admin_delete_button(c: CallbackQuery, state: FSMContext) -> None:
     await c.answer()
 
 
+@dp.message(F.text == "🗑 Удалить кнопку")
+async def admin_delete_button_text(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.set_state(DeleteButtonFlow.button_id)
+    await m.answer("Введите ID кнопки для удаления:")
+
+
 @dp.message(DeleteButtonFlow.button_id)
 async def admin_delete_button_id(m: Message, state: FSMContext) -> None:
     if not is_owner(m.from_user.id):
@@ -706,6 +774,14 @@ async def admin_delete_button_id(m: Message, state: FSMContext) -> None:
         await m.answer("Кнопка не найдена.")
         return
     await m.answer("Кнопка удалена.")
+
+
+@dp.message(F.text == "❌ Сброс")
+async def admin_reset_text(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.clear()
+    await m.answer("Готово, сбросила шаги.", reply_markup=ReplyKeyboardRemove())
 
 
 @dp.message(F.text == "/nodes")
@@ -951,4 +1027,5 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
