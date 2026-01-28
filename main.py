@@ -32,7 +32,7 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 CHANNEL_URL = "https://t.me/ozonbluerise"
 CONSULT_FORM_URL = os.getenv("CONSULTATION_FORM_URL", "https://example.com")
 HELP_CONTACT = "yashiann"
-INVOICE_CONTACT = "ilya_bolsheglazov"
+INVOICE_CONTACT = "BlueRise_support"
 
 DEFAULT_ROOT_TEXT = (
     "Приветствую, {name}!\n\n"
@@ -357,6 +357,23 @@ async def fetch_buttons(slug: str) -> list[Button]:
     ]
 
 
+async def find_root_target_by_label(label: str) -> Optional[str]:
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT b.target
+            FROM buttons b
+            JOIN nodes n ON n.id = b.node_id
+            WHERE n.slug='root' AND b.label=$1
+            """,
+            label,
+        )
+    if not row:
+        return None
+    return row["target"]
+
+
 def build_kb(buttons: Iterable[Button]) -> Optional[InlineKeyboardMarkup]:
     rows: list[list[InlineKeyboardButton]] = []
     for btn in buttons:
@@ -369,6 +386,13 @@ def build_kb(buttons: Iterable[Button]) -> Optional[InlineKeyboardMarkup]:
     if not rows:
         return None
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_root_reply_kb(buttons: Iterable[Button]) -> ReplyKeyboardMarkup:
+    keyboard: list[list[KeyboardButton]] = []
+    for btn in buttons:
+        keyboard.append([KeyboardButton(text=btn.label)])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 def admin_menu_kb() -> InlineKeyboardMarkup:
@@ -403,6 +427,18 @@ def admin_reply_kb() -> ReplyKeyboardMarkup:
     )
 
 
+async def render_node(target: Message, slug: str) -> None:
+    node = await fetch_node(slug)
+    if not node:
+        await target.answer("Раздел не найден.")
+        return
+    buttons = await fetch_buttons(slug)
+    await target.answer(node.text, reply_markup=build_kb(buttons))
+
+    if slug == "courses":
+        await render_node(target, "pre_courses")
+
+
 @dp.message(CommandStart())
 async def start(m: Message) -> None:
     name = m.from_user.first_name if m.from_user else "друг"
@@ -412,18 +448,26 @@ async def start(m: Message) -> None:
         return
     text = node.text.replace("{name}", name)
     buttons = await fetch_buttons("root")
-    await m.answer(text, reply_markup=build_kb(buttons))
+    await m.answer(text, reply_markup=build_root_reply_kb(buttons))
+
+
+@dp.message(F.text)
+async def root_menu_click(m: Message, state: FSMContext) -> None:
+    text = (m.text or "").strip()
+    if text.startswith("/"):
+        return
+    if await state.get_state():
+        return
+    target = await find_root_target_by_label(text)
+    if not target:
+        return
+    await render_node(m, target)
 
 
 @dp.callback_query(F.data.startswith("node:"))
 async def cb_node(c: CallbackQuery) -> None:
     slug = c.data.split(":", 1)[1]
-    node = await fetch_node(slug)
-    if not node:
-        await c.answer("Раздел не найден.", show_alert=True)
-        return
-    buttons = await fetch_buttons(slug)
-    await c.message.answer(node.text, reply_markup=build_kb(buttons))
+    await render_node(c.message, slug)
     await c.answer()
 
 
@@ -432,7 +476,7 @@ async def admin_help(m: Message) -> None:
     if not is_owner(m.from_user.id):
         return
     await m.answer(
-        "Админ-режим. Выберите действие или используйте команды ниже:\n"
+        "Админ-режим. Выберите дейсвие или используйте команды ниже:\n"
         "/nodes — список разделов\n"
         "/node <slug> — показать раздел и кнопки\n"
         "/addnode <slug> <text> — создать раздел\n"
@@ -491,7 +535,7 @@ async def admin_edit_text(c: CallbackQuery, state: FSMContext) -> None:
 
 
 @dp.message(F.text == "✏️ Изменить текст")
-async def admin_edit_text_text(m: Message, state: FSMContext) -> None:
+async def admin_edit_text_message(m: Message, state: FSMContext) -> None:
     if not is_owner(m.from_user.id):
         return
     await state.set_state(EditTextFlow.slug)
@@ -513,7 +557,7 @@ async def admin_edit_text_slug(m: Message, state: FSMContext) -> None:
 
 
 @dp.message(EditTextFlow.text)
-async def admin_edit_text_text(m: Message, state: FSMContext) -> None:
+async def admin_edit_text_value(m: Message, state: FSMContext) -> None:
     if not is_owner(m.from_user.id):
         return
     data = await state.get_data()
@@ -540,7 +584,7 @@ async def admin_add_button(c: CallbackQuery, state: FSMContext) -> None:
 
 
 @dp.message(F.text == "➕ Добавить кнопку")
-async def admin_add_button_text(m: Message, state: FSMContext) -> None:
+async def admin_add_button_message(m: Message, state: FSMContext) -> None:
     if not is_owner(m.from_user.id):
         return
     await state.set_state(AddButtonFlow.slug)
@@ -644,7 +688,7 @@ async def admin_edit_button(c: CallbackQuery, state: FSMContext) -> None:
 
 
 @dp.message(F.text == "🔧 Изменить кнопку")
-async def admin_edit_button_text(m: Message, state: FSMContext) -> None:
+async def admin_edit_button_message(m: Message, state: FSMContext) -> None:
     if not is_owner(m.from_user.id):
         return
     await state.set_state(EditButtonFlow.button_id)
@@ -750,11 +794,19 @@ async def admin_delete_button(c: CallbackQuery, state: FSMContext) -> None:
 
 
 @dp.message(F.text == "🗑 Удалить кнопку")
-async def admin_delete_button_text(m: Message, state: FSMContext) -> None:
+async def admin_delete_button_message(m: Message, state: FSMContext) -> None:
     if not is_owner(m.from_user.id):
         return
     await state.set_state(DeleteButtonFlow.button_id)
     await m.answer("Введите ID кнопки для удаления:")
+
+
+@dp.message(F.text == "❌ Сброс")
+async def admin_reset_text(m: Message, state: FSMContext) -> None:
+    if not is_owner(m.from_user.id):
+        return
+    await state.clear()
+    await m.answer("Готово, сбросила шаги.", reply_markup=ReplyKeyboardRemove())
 
 
 @dp.message(DeleteButtonFlow.button_id)
@@ -774,14 +826,6 @@ async def admin_delete_button_id(m: Message, state: FSMContext) -> None:
         await m.answer("Кнопка не найдена.")
         return
     await m.answer("Кнопка удалена.")
-
-
-@dp.message(F.text == "❌ Сброс")
-async def admin_reset_text(m: Message, state: FSMContext) -> None:
-    if not is_owner(m.from_user.id):
-        return
-    await state.clear()
-    await m.answer("Готово, сбросила шаги.", reply_markup=ReplyKeyboardRemove())
 
 
 @dp.message(F.text == "/nodes")
@@ -1027,5 +1071,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
