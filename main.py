@@ -31,14 +31,14 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 
 CHANNEL_URL = "https://t.me/ozonbluerise"
 CONSULT_FORM_URL = os.getenv("CONSULTATION_FORM_URL", "https://example.com")
-HELP_CONTACT = "BlueRise_support"
-INVOICE_CONTACT = "BlueRise_support"
+SUPPORT_CONTACT = "BlueRise_support"
 
 DEFAULT_ROOT_TEXT = (
     "Приветствую, {name}!\n\n"
     "Это «Синий рассвет» — здесь мы систематизируем бизнес на маркетплейсах: "
     "от основ до продвинутых стратегий."
 )
+
 
 dp = Dispatcher()
 POOL: Optional[asyncpg.Pool] = None
@@ -185,7 +185,7 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
         (
             "beginner_course",
             "«Грамотный старт на Озон» — для селлеров и менеджеров, которые делают первые шаги в Озон "
-            "и хотят начать веренно разбираться во всех основных вещах, необходимых для ведения прибыльного бизнеса.",
+            "и хотят начать уверенно разбираться во всех основных вещах, необходимых для ведения прибыльного бизнеса.",
         ),
         (
             "advanced_courses",
@@ -204,7 +204,7 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
         ),
         (
             "pro_analytics",
-            "Курс PRO Аналитику — для тех, кто хочет изучить все значимые нюансы и все инструменты, которые необходимы для анализа.",
+            "Курс PRO Аналитику — для тех, кто хочет изучить все значимые нюансы и все инструменты, которые необходимы for анализа.",
         ),
         (
             "pro_finance",
@@ -303,7 +303,7 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
     await ensure_button(conn, node_ids["pre_courses"], "🛠️ Спецкурсы и инструменты", "node", "special_courses", 3)
     await ensure_button(conn, node_ids["pre_courses"], "⬅️ Назад", "node", "courses", 4)
     await ensure_button(conn, node_ids["beginner_course"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/GSO_VC", 1)
-    await ensure_button(conn, node_ids["beginner_course"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «Грамотный старт на Озон»."), 2)
+    await ensure_button(conn, node_ids["beginner_course"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «Грамотный старт на Озон»."), 2)
     await ensure_button(conn, node_ids["beginner_course"], "⬅️ Назад", "node", "pre_courses", 3)
     await ensure_button(conn, node_ids["advanced_courses"], "PRO логистику", "node", "pro_logistics", 1)
     await ensure_button(conn, node_ids["advanced_courses"], "PRO рекламу", "node", "pro_ads", 2)
@@ -312,28 +312,28 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
     await ensure_button(conn, node_ids["advanced_courses"], "Всё про Озон", "node", "all_about_ozon", 5)
     await ensure_button(conn, node_ids["advanced_courses"], "⬅️ Назад", "node", "pre_courses", 6)
     await ensure_button(conn, node_ids["pro_logistics"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_logistics", 1)
-    await ensure_button(conn, node_ids["pro_logistics"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO логистику»."), 2)
+    await ensure_button(conn, node_ids["pro_logistics"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO логистику»."), 2)
     await ensure_button(conn, node_ids["pro_logistics"], "⬅️ Назад", "node", "advanced_courses", 3)
     await ensure_button(conn, node_ids["pro_ads"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Reklamu", 1)
-    await ensure_button(conn, node_ids["pro_ads"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO рекламу»."), 2)
+    await ensure_button(conn, node_ids["pro_ads"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO рекламу»."), 2)
     await ensure_button(conn, node_ids["pro_ads"], "⬅️ Назад", "node", "advanced_courses", 3)
     await ensure_button(conn, node_ids["pro_analytics"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Analytics", 1)
-    await ensure_button(conn, node_ids["pro_analytics"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Аналитику»."), 2)
+    await ensure_button(conn, node_ids["pro_analytics"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Аналитику»."), 2)
     await ensure_button(conn, node_ids["pro_analytics"], "⬅️ Назад", "node", "advanced_courses", 3)
     await ensure_button(conn, node_ids["pro_finance"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Finance", 1)
-    await ensure_button(conn, node_ids["pro_finance"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Финансы»."), 2)
+    await ensure_button(conn, node_ids["pro_finance"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Финансы»."), 2)
     await ensure_button(conn, node_ids["pro_finance"], "⬅️ Назад", "node", "advanced_courses", 3)
     await ensure_button(conn, node_ids["all_about_ozon"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/all_about_ozon", 1)
-    await ensure_button(conn, node_ids["all_about_ozon"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты комплекта «Всё про Озон»."), 2)
+    await ensure_button(conn, node_ids["all_about_ozon"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты комплекта «Всё про Озон»."), 2)
     await ensure_button(conn, node_ids["all_about_ozon"], "⬅️ Назад", "node", "advanced_courses", 3)
     await ensure_button(conn, node_ids["special_courses"], "PRO Дизайн", "node", "pro_design", 1)
     await ensure_button(conn, node_ids["special_courses"], "Нейросети от SXR Studio", "node", "sxr_ai", 2)
     await ensure_button(conn, node_ids["special_courses"], "⬅️ Назад", "node", "pre_courses", 3)
     await ensure_button(conn, node_ids["pro_design"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_design", 1)
-    await ensure_button(conn, node_ids["pro_design"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Дизайн»."), 2)
+    await ensure_button(conn, node_ids["pro_design"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «PRO Дизайн»."), 2)
     await ensure_button(conn, node_ids["pro_design"], "⬅️ Назад", "node", "special_courses", 3)
     await ensure_button(conn, node_ids["sxr_ai"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/SXR_AI", 1)
-    await ensure_button(conn, node_ids["sxr_ai"], "Выставить счет для оплаты с р/с", "url", tg_link(INVOICE_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «Нейросети от SXR Studio»."), 2)
+    await ensure_button(conn, node_ids["sxr_ai"], "Выставить счет для оплаты с р/с", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте, мне нужен счет для оплаты курса «Нейросети от SXR Studio»."), 2)
     await ensure_button(conn, node_ids["sxr_ai"], "⬅️ Назад", "node", "special_courses", 3)
     await ensure_button(conn, node_ids["new_courses"], "📚 Предзаписанные курсы", "node", "pre_courses", 1)
     await ensure_button(conn, node_ids["new_courses"], "Подписаться на канал", "url", CHANNEL_URL, 2)
@@ -341,14 +341,14 @@ async def seed_default_nodes(conn: asyncpg.Connection, root_id: int) -> None:
     await ensure_button(conn, node_ids["webinars"], "Вебинар тут", "url", "https://bluerise.getcourse.ru/teach/control/stream/view/id/934642226", 1)
     await ensure_button(conn, node_ids["webinars"], "Подписаться на канал", "url", CHANNEL_URL, 2)
     await ensure_button(conn, node_ids["webinars"], "⬅️ Назад", "node", "courses", 3)
-    await ensure_button(conn, node_ids["help"], "Написать в поддержку", "url", tg_link(HELP_CONTACT, "Добрый день. Помогите с выбором курса."), 1)
+    await ensure_button(conn, node_ids["help"], "Написать в поддержку", "url", tg_link(SUPPORT_CONTACT, "Добрый день. Помогите с выбором курса."), 1)
     await ensure_button(conn, node_ids["help"], "⬅️ Назад", "node", "courses", 2)
-    await ensure_button(conn, node_ids["support"], "Написать в поддержку", "url", tg_link(INVOICE_CONTACT, "Добрый день. Возникла техническая проблема: [опишите, пожалуйста]."), 1)
+    await ensure_button(conn, node_ids["support"], "Написать в поддержку", "url", tg_link(SUPPORT_CONTACT, "Добрый день. Возникла техническая проблема: [опишите, пожалуйста]."), 1)
     await ensure_button(conn, node_ids["support"], "⬅️ Назад", "node", "courses", 2)
     await ensure_button(conn, node_ids["calculator"], "Калькулятор здесь", "url", "https://docs.google.com/spreadsheets/d/1e4AVf3dDueEoPxQHeKOVFHgSpbcLvnbGnn6_I6ApRwg/edit?gid=246238448#gid=246238448", 1)
     await ensure_button(conn, node_ids["calculator"], "Подписаться на канал", "url", CHANNEL_URL, 2)
     await ensure_button(conn, node_ids["calculator"], "⬅️ Назад", "node", "root", 3)
-    await ensure_button(conn, node_ids["partnership"], "Написать в Telegram", "url", tg_link(HELP_CONTACT, "Здравствуйте! Хочу обсудить сотрудничество."), 1)
+    await ensure_button(conn, node_ids["partnership"], "Написать в Telegram", "url", tg_link(SUPPORT_CONTACT, "Здравствуйте! Хочу обсудить сотрудничество."), 1)
     await ensure_button(conn, node_ids["partnership"], "⬅️ Назад", "node", "root", 2)
     await ensure_button(conn, node_ids["consult"], "📅 ЗАПОЛНИТЬ ЗАЯВКУ", "url", CONSULT_FORM_URL, 1)
     await ensure_button(conn, node_ids["consult"], "⬅️ Назад", "node", "root", 2)
@@ -419,130 +419,302 @@ def build_kb(buttons: Iterable[Button]) -> Optional[InlineKeyboardMarkup]:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_root_reply_kb(buttons: Iterable[Button]) -> ReplyKeyboardMarkup:
-    keyboard: list[list[KeyboardButton]] = []
-    for btn in buttons:
-        keyboard.append([KeyboardButton(text=btn.label)])
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-
-
-def admin_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📄 Разделы", callback_data="admin:sections")],
-            [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="admin:edit_text")],
-            [InlineKeyboardButton(text="➕ Добавить кнопку", callback_data="admin:add_button")],
-            [InlineKeyboardButton(text="🔧 Изменить кнопку", callback_data="admin:edit_button")],
-            [InlineKeyboardButton(text="🗑 Удалить кнопку", callback_data="admin:delete_button")],
-        ]
-    )
-
-
-def admin_reply_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="📄 Разделы"),
-                KeyboardButton(text="✏️ Изменить текст"),
-            ],
-            [
-                KeyboardButton(text="➕ Добавить кнопку"),
-                KeyboardButton(text="🔧 Изменить кнопку"),
-            ],
-            [
-                KeyboardButton(text="🗑 Удалить кнопку"),
-                KeyboardButton(text="❌ Сброс"),
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-async def render_node(target: Message, slug: str) -> None:
+async def render_node(message: Message, slug: str) -> None:
     node = await fetch_node(slug)
     if not node:
-        await target.answer("Раздел не найден. Проверьте структуру или выполните /repair.")
+        if is_owner(message.from_user.id):
+            await message.answer(
+                "Раздел не найден. Возможно, меню было удалено вручную. "
+                "Запустите команду /repair, чтобы восстановить структуру.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        else:
+            await message.answer(
+                "Раздел временно недоступен. Пожалуйста, попробуйте позже.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
         return
     buttons = await fetch_buttons(slug)
-    await target.answer(node.text, reply_markup=build_kb(buttons))
+    await message.answer(node.text, reply_markup=build_kb(buttons))
 
-    if slug == "courses":
-        await render_node(target, "pre_courses")
+
+async def show_root(message: Message) -> None:
+    await render_node(message, "root")
+
+
+def owner_guard(message: Message) -> bool:
+    return message.from_user and is_owner(message.from_user.id)
 
 
 @dp.message(CommandStart())
-async def start(m: Message) -> None:
-    name = m.from_user.first_name if m.from_user else "друг"
-    node = await fetch_node("root")
-    if not node:
-        await m.answer("Меню ещё не настроено.")
-        return
-    text = node.text.replace("{name}", name)
-    buttons = await fetch_buttons("root")
-    await m.answer(text, reply_markup=build_root_reply_kb(buttons))
-
-
-@dp.message(F.text)
-async def root_menu_click(m: Message, state: FSMContext) -> None:
-    text = (m.text or "").strip()
-    if text.startswith("/"):
-        return
-    if await state.get_state():
-        return
-    target = await find_root_target_by_label(text)
-    if not target:
-        return
-    await render_node(m, target)
-
-
-@dp.callback_query(F.data.startswith("node:"))
-async def cb_node(c: CallbackQuery) -> None:
-    slug = c.data.split(":", 1)[1]
-    await render_node(c.message, slug)
-    await c.answer()
-
-
-@dp.message(F.text == "/admin")
-async def admin_help(m: Message) -> None:
-    if not is_owner(m.from_user.id):
-        return
-    await m.answer(
-        "Админ-режим. Выберите действие или используйте команды ниже:\n"
-        "/nodes — список разделов\n"
-        "/node <slug> — показать раздел и кнопки\n"
-        "/addnode <slug> <text> — создать раздел\n"
-        "/delnode <slug> — удалить раздел\n"
-        "/settext <slug> <text> — обновить текст раздела\n"
-        "/addbtn <slug> <label> | <node:slug|url:https://...> | [position]\n"
-        "/setbtn <id> <label> | <node:slug|url:https://...> | [position]\n"
-        "/delbtn <id> — удалить кнопку\n\n"
-        "Чтобы выйти из пошагового режима: /cancel",
-        reply_markup=admin_reply_kb(),
-    )
+async def cmd_start(message: Message) -> None:
+    await show_root(message)
 
 
 @dp.message(F.text == "/repair")
-async def repair_seed(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+async def cmd_repair(message: Message) -> None:
+    if not owner_guard(message):
+        await message.answer("Команда доступна только владельцу.")
         return
     assert POOL is not None
     async with POOL.acquire() as conn:
         root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT.format(name="друг"))
         await seed_default_nodes(conn, root_id)
-    await m.answer("Структура восстановлена. Попробуйте снова открыть раздел.")
+    await message.answer("Структура меню восстановлена.")
 
 
-@dp.message(F.text == "/cancel")
-async def cancel_flow(m: Message, state: FSMContext) -> None:
-    if not is_owner(m.from_user.id):
+@dp.callback_query(F.data.startswith("node:"))
+async def on_node(callback: CallbackQuery) -> None:
+    slug = callback.data.split(":", 1)[1]
+    await callback.answer()
+    await render_node(callback.message, slug)
+
+
+@dp.message(F.text == "/admin")
+async def cmd_admin(message: Message, state: FSMContext) -> None:
+    if not owner_guard(message):
+        await message.answer("Команда доступна только владельцу.")
         return
     await state.clear()
-    await m.answer("Готово, сбросила шаги.", reply_markup=ReplyKeyboardRemove())
+
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="/edit")],
+            [KeyboardButton(text="/add_button"), KeyboardButton(text="/edit_button")],
+            [KeyboardButton(text="/delete_button"), KeyboardButton(text="/repair")],
+            [KeyboardButton(text="/finish")],
+        ],
+        resize_keyboard=True,
+    )
+
+    await message.answer("Админ-панель открыта.", reply_markup=kb)
 
 
-# --- остальной код админ‑панели (без изменений) ---
-# он уже корректен, оставьте как есть
-# --------------------------------------------------
+@dp.message(F.text == "/finish")
+async def cmd_finish(message: Message, state: FSMContext) -> None:
+    if not owner_guard(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+    await state.clear()
+    await message.answer("Админ-панель закрыта.", reply_markup=ReplyKeyboardRemove())
+
+
+@dp.message(F.text == "/edit")
+async def cmd_edit(message: Message, state: FSMContext) -> None:
+    if not owner_guard(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+    await state.set_state(EditTextFlow.slug)
+    await message.answer("Введите slug раздела для изменения текста.")
+
+
+@dp.message(EditTextFlow.slug)
+async def edit_slug(message: Message, state: FSMContext) -> None:
+    slug = message.text.strip()
+    node = await fetch_node(slug)
+    if not node:
+        await message.answer("Раздел не найден. Попробуйте снова.")
+        return
+    await state.update_data(slug=slug)
+    await state.set_state(EditTextFlow.text)
+    await message.answer("Введите новый текст для раздела.")
+
+
+@dp.message(EditTextFlow.text)
+async def edit_text(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    slug = data["slug"]
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        await conn.execute("UPDATE nodes SET text=$1 WHERE slug=$2", message.text, slug)
+    await state.clear()
+    await message.answer("Текст обновлен.")
+
+
+@dp.message(F.text == "/add_button")
+async def cmd_add_button(message: Message, state: FSMContext) -> None:
+    if not owner_guard(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+    await state.clear()
+    await state.set_state(AddButtonFlow.slug)
+    await message.answer("Введите slug раздела, куда добавить кнопку.")
+
+
+@dp.message(AddButtonFlow.slug)
+async def add_button_slug(message: Message, state: FSMContext) -> None:
+    slug = message.text.strip()
+    node = await fetch_node(slug)
+    if not node:
+        await message.answer("Раздел не найден. Попробуйте снова.")
+        return
+    await state.update_data(slug=slug)
+    await state.set_state(AddButtonFlow.label)
+    await message.answer("Введите текст кнопки.")
+
+
+@dp.message(AddButtonFlow.label)
+async def add_button_label(message: Message, state: FSMContext) -> None:
+    await state.update_data(label=message.text)
+    await state.set_state(AddButtonFlow.action)
+    await message.answer("Введите тип кнопки (node/url).")
+
+
+@dp.message(AddButtonFlow.action)
+async def add_button_action(message: Message, state: FSMContext) -> None:
+    action = message.text.strip().lower()
+    if action not in {"node", "url"}:
+        await message.answer("Неверный тип. Введите node или url.")
+        return
+    await state.update_data(action=action)
+    await state.set_state(AddButtonFlow.target)
+    await message.answer("Введите target (slug или URL).")
+
+
+@dp.message(AddButtonFlow.target)
+async def add_button_target(message: Message, state: FSMContext) -> None:
+    await state.update_data(target=message.text.strip())
+    await state.set_state(AddButtonFlow.position)
+    await message.answer("Введите позицию кнопки (число).")
+
+
+@dp.message(AddButtonFlow.position)
+async def add_button_position(message: Message, state: FSMContext) -> None:
+    if not message.text.isdigit():
+        await message.answer("Позиция должна быть числом.")
+        return
+    data = await state.get_data()
+    position = int(message.text)
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        node_id = await conn.fetchval("SELECT id FROM nodes WHERE slug=$1", data["slug"])
+        if not node_id:
+            await message.answer("Раздел не найден.")
+            return
+        await conn.execute(
+            """
+            INSERT INTO buttons (node_id, label, action_type, target, position)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            node_id,
+            data["label"],
+            data["action"],
+            data["target"],
+            position,
+        )
+    await state.clear()
+    await message.answer("Кнопка добавлена.")
+
+
+@dp.message(F.text == "/edit_button")
+async def cmd_edit_button(message: Message, state: FSMContext) -> None:
+    if not owner_guard(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+    await state.clear()
+    await state.set_state(EditButtonFlow.button_id)
+    await message.answer("Введите ID кнопки для изменения.")
+
+
+@dp.message(EditButtonFlow.button_id)
+async def edit_button_id(message: Message, state: FSMContext) -> None:
+    if not message.text.isdigit():
+        await message.answer("ID должен быть числом.")
+        return
+    button_id = int(message.text)
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, label, action_type, target, position
+            FROM buttons
+            WHERE id=$1
+            """,
+            button_id,
+        )
+    if not row:
+        await message.answer("Кнопка не найдена.")
+        return
+    await state.update_data(button_id=button_id)
+    await state.set_state(EditButtonFlow.label)
+    await message.answer("Введите новый текст кнопки.")
+
+
+@dp.message(EditButtonFlow.label)
+async def edit_button_label(message: Message, state: FSMContext) -> None:
+    await state.update_data(label=message.text)
+    await state.set_state(EditButtonFlow.action)
+    await message.answer("Введите тип кнопки (node/url).")
+
+
+@dp.message(EditButtonFlow.action)
+async def edit_button_action(message: Message, state: FSMContext) -> None:
+    action = message.text.strip().lower()
+    if action not in {"node", "url"}:
+        await message.answer("Неверный тип. Введите node или url.")
+        return
+    await state.update_data(action=action)
+    await state.set_state(EditButtonFlow.target)
+    await message.answer("Введите target (slug или URL).")
+
+
+@dp.message(EditButtonFlow.target)
+async def edit_button_target(message: Message, state: FSMContext) -> None:
+    await state.update_data(target=message.text.strip())
+    await state.set_state(EditButtonFlow.position)
+    await message.answer("Введите позицию кнопки (число).")
+
+
+@dp.message(EditButtonFlow.position)
+async def edit_button_position(message: Message, state: FSMContext) -> None:
+    if not message.text.isdigit():
+        await message.answer("Позиция должна быть числом.")
+        return
+    data = await state.get_data()
+    position = int(message.text)
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE buttons
+            SET label=$1, action_type=$2, target=$3, position=$4
+            WHERE id=$5
+            """,
+            data["label"],
+            data["action"],
+            data["target"],
+            position,
+            data["button_id"],
+        )
+    await state.clear()
+    await message.answer("Кнопка обновлена.")
+
+
+@dp.message(F.text == "/delete_button")
+async def cmd_delete_button(message: Message, state: FSMContext) -> None:
+    if not owner_guard(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+    await state.clear()
+    await state.set_state(DeleteButtonFlow.button_id)
+    await message.answer("Введите ID кнопки для удаления.")
+
+
+@dp.message(DeleteButtonFlow.button_id)
+async def delete_button_id(message: Message, state: FSMContext) -> None:
+    if not message.text.isdigit():
+        await message.answer("ID должен быть числом.")
+        return
+    button_id = int(message.text)
+    assert POOL is not None
+    async with POOL.acquire() as conn:
+        result = await conn.execute("DELETE FROM buttons WHERE id=$1", button_id)
+    await state.clear()
+    if result == "DELETE 0":
+        await m.answer("Кнопка не найдена.")
+        return
+    await m.answer("Кнопка удалена.")
+
 
 async def main() -> None:
     global POOL
@@ -579,4 +751,5 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
