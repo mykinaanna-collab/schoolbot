@@ -31,7 +31,7 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 
 CHANNEL_URL = "https://t.me/ozonbluerise"
 CONSULT_FORM_URL = os.getenv("CONSULTATION_FORM_URL", "https://example.com")
-HELP_CONTACT = "yashiann"
+HELP_CONTACT = "BlueRise_support"
 INVOICE_CONTACT = "BlueRise_support"
 
 DEFAULT_ROOT_TEXT = (
