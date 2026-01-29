@@ -751,8 +751,7 @@ async def render_node(target: Message, slug: str) -> None:
     buttons = await fetch_buttons(slug)
     await target.answer(node.text, reply_markup=build_kb(buttons))
 
-    if slug == "courses":
-        await render_node(target, "pre_courses")
+   
 
 
 @dp.message(CommandStart())
