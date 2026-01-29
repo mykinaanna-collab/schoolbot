@@ -43,7 +43,6 @@ DEFAULT_ROOT_TEXT = (
     "от основ до продвинутых стратегий."
 )
 
-
 dp = Dispatcher()
 POOL: Optional[asyncpg.Pool] = None
 
@@ -139,7 +138,8 @@ async def ensure_node(conn: asyncpg.Connection, slug: str, text: str) -> int:
         return node_id
     existing = await conn.fetchval("SELECT id FROM nodes WHERE slug=$1", slug)
     if not existing:
-        raise RuntimeError(f"Failed to create or fetch node: {slug}\")
+        # было: raise RuntimeError(f\"Failed to create or fetch node: {slug}\")
+        raise RuntimeError(f"Failed to create or fetch node: {slug}")
     return existing
 
 
@@ -152,11 +152,11 @@ async def ensure_button(
     position: int,
 ) -> None:
     exists = await conn.fetchval(
-        \"\"\"
+        """
         SELECT id
         FROM buttons
         WHERE node_id=$1 AND label=$2 AND action_type=$3 AND target=$4
-        \"\"\",
+        """,
         node_id,
         label,
         action_type,
@@ -165,10 +165,10 @@ async def ensure_button(
     if exists:
         return
     await conn.execute(
-        \"\"\"
+        """
         INSERT INTO buttons (node_id, label, action_type, target, position)
         VALUES ($1, $2, $3, $4, $5)
-        \"\"\",
+        """,
         node_id,
         label,
         action_type,
@@ -326,7 +326,14 @@ async def seed_default_nodes(
     await ensure_button(conn, node_ids["pre_courses"], "⚡ Ozon: Продвинутый уровень", "node", "advanced_courses", 2)
     await ensure_button(conn, node_ids["pre_courses"], "🛠️ Спецкурсы и инструменты", "node", "special_courses", 3)
     await ensure_button(conn, node_ids["pre_courses"], "⬅️ Назад", "node", "courses", 4)
-    await ensure_button(conn, node_ids["beginner_course"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/GSO_VC", 1)
+    await ensure_button(
+        conn,
+        node_ids["beginner_course"],
+        "Узнать подробности и купить курс",
+        "url",
+        "https://bluerise.getcourse.ru/GSO_VC",
+        1,
+    )
     await ensure_button(
         conn,
         node_ids["beginner_course"],
@@ -358,7 +365,14 @@ async def seed_default_nodes(
     await ensure_button(conn, node_ids["advanced_courses"], "PRO Финансы", "node", "pro_finance", 4)
     await ensure_button(conn, node_ids["advanced_courses"], "Всё про Озон", "node", "all_about_ozon", 5)
     await ensure_button(conn, node_ids["advanced_courses"], "⬅️ Назад", "node", "pre_courses", 6)
-    await ensure_button(conn, node_ids["pro_logistics"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_logistics", 1)
+    await ensure_button(
+        conn,
+        node_ids["pro_logistics"],
+        "Узнать подробности и купить курс",
+        "url",
+        "https://bluerise.getcourse.ru/PRO_logistics",
+        1,
+    )
     await ensure_button(
         conn,
         node_ids["pro_logistics"],
@@ -1236,7 +1250,8 @@ async def set_text(m: Message) -> None:
     await m.answer("Текст обновлён.")
 
 
-def parse_button_payload(raw: str) -> Optional[tuple[str, str, Optional[int]]]:
+# было: Optional[tuple[str, str, Optional[int]]] — неверно (возвращается 4 значения)
+def parse_button_payload(raw: str) -> Optional[tuple[str, str, str, Optional[int]]]:
     parts = [part.strip() for part in raw.split("|")]
     if len(parts) < 3:
         return None
@@ -1387,3 +1402,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
