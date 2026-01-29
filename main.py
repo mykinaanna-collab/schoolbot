@@ -139,7 +139,7 @@ async def ensure_node(conn: asyncpg.Connection, slug: str, text: str) -> int:
         return node_id
     existing = await conn.fetchval("SELECT id FROM nodes WHERE slug=$1", slug)
     if not existing:
-        raise RuntimeError(f\"Failed to create or fetch node: {slug}\")
+        raise RuntimeError(f"Failed to create or fetch node: {slug}\")
     return existing
 
 
