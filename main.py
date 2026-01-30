@@ -35,7 +35,7 @@ CONSULT_FORM_URL = os.getenv(
     "https://forms.yandex.ru/u/697a05d3d046884d940bc2af/",
 )
 
-# Важно: это профиль поддержки (не бот)
+# Профиль поддержки (НЕ бот)
 SUPPORT_CONTACT = "BlueRise_support"
 LEGACY_SUPPORT_HANDLES = ("yashiann", "ilya_bolsheglazov")
 
@@ -45,15 +45,25 @@ DEFAULT_ROOT_TEXT = (
     "от основ до продвинутых стратегий."
 )
 
-# Текст для предзаполненного сообщения в поддержку (без отправки)
-BILLING_PREFILL_TEXT = (
-    "Добрый день. Хочу оплатить через р/с. "
-    "Выставьте пожалуйста счет. "
-    "ИНН организации: (укажите свой ИНН)."
-)
-
 # Единое имя кнопки для ссылки оплаты по карте/СБП
 PAYLINK_BUTTON_LABEL = "Запросить ссылку на оплату по карте или СБП"
+
+# Единое имя кнопки для счета
+BILL_BUTTON_LABEL = "Выставить счет для оплаты с р/с"
+
+
+def bill_prefill(course_title: str) -> str:
+    # Диалог открывается с предзаполненным текстом (НЕ отправляется автоматически)
+    return (
+        "Добрый день. Хочу оплатить через р/с. "
+        f"Выставьте пожалуйста счет за курс «{course_title}». "
+        "ИНН организации — (укажите свой ИНН)."
+    )
+
+
+def paylink_prefill(course_title: str) -> str:
+    return f"Здравствуйте! Нужна ссылка на оплату по карте или СБП за курс «{course_title}»."
+
 
 dp = Dispatcher()
 POOL: Optional[asyncpg.Pool] = None
@@ -104,16 +114,16 @@ def is_owner(user_id: int) -> bool:
 
 
 def tg_link(username: str, text: str) -> str:
-    # Откроет диалог и предзаполнит поле ввода (не отправляет автоматически)
     return f"https://t.me/{username}?text={quote(text)}"
 
 
 async def init_db() -> None:
     """
-    Инициализация БД + защита от дублей:
-    - дедупим кнопки
-    - создаём уникальный индекс по (node_id, label, action_type, target)
-    - дальше любые вставки делаем ON CONFLICT DO NOTHING
+    ВАЖНО:
+    - Сначала создаём таблицы
+    - Потом удаляем дубли (если были)
+    - Потом создаём UNIQUE индекс (node_id, label)
+    - И только после этого начинаем использовать ON CONFLICT
     """
     assert POOL is not None
     async with POOL.acquire() as conn:
@@ -139,25 +149,27 @@ async def init_db() -> None:
             """
         )
 
-        root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT.format(name="друг"))
-        await seed_default_nodes(conn, root_id)
-
-        # миграции текста/ссылок
-        await migrate_support_contacts(conn)
-        await migrate_text_typos(conn)
-
-        # 1) сначала дедуп
+        # 1) чистим дубли (если уже были)
         await dedupe_buttons(conn)
 
-        # 2) потом уникальный индекс (чтобы дубли больше не могли появиться)
+        # 2) создаём уникальность по (node_id, label) — чтобы не могло быть 2 одинаковых кнопок по названию
         await conn.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_buttons_node_label_action_target
-            ON buttons (node_id, label, action_type, target);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_buttons_node_label
+            ON buttons (node_id, label);
             """
         )
 
-        # 3) на всякий случай ещё раз дедуп (если параллельно что-то успело вставиться)
+        # 3) гарантируем root + структуру
+        root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT.format(name="друг"))
+        await seed_default_nodes(conn, root_id)
+
+        # 4) миграции текстов/ссылок (и в nodes, и в buttons)
+        await migrate_support_contacts(conn)
+        await migrate_text_typos(conn)
+        await normalize_buttons(conn)
+
+        # 5) финальный дедуп на всякий
         await dedupe_buttons(conn)
 
 
@@ -185,14 +197,18 @@ async def ensure_button(
     position: int,
 ) -> None:
     """
-    Атомарно: вставка без дублей.
-    Требует уникального индекса ux_buttons_node_label_action_target.
+    UPSERT по (node_id, label):
+    - если кнопка уже есть — обновляем action/target/position
+    - это убирает дубли и гарантирует актуальные ссылки/тексты
     """
     await conn.execute(
         """
         INSERT INTO buttons (node_id, label, action_type, target, position)
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (node_id, label, action_type, target) DO NOTHING
+        ON CONFLICT (node_id, label) DO UPDATE
+        SET action_type = EXCLUDED.action_type,
+            target = EXCLUDED.target,
+            position = EXCLUDED.position
         """,
         node_id,
         label,
@@ -245,10 +261,7 @@ async def seed_default_nodes(
             "Курс «PRO Финансы» — для тех, кто хочет научиться считать юнит-план и юнит-факт, ROI и маржинальность. "
             "Разбираться в финансовых отчетах Озона, иметь представление о кредитных инструментах.",
         ),
-        (
-            "all_about_ozon",
-            "Все 4 блока курсов PRO логистику, PRO рекламу, PRO аналитику, PRO финансы в одном со скидкой 20%.",
-        ),
+        ("all_about_ozon", "Все 4 блока курсов PRO логистику, PRO рекламу, PRO аналитику, PRO финансы в одном со скидкой 20%."),
         ("special_courses", "Спецкурсы и инструменты: выберите курс 👇"),
         (
             "pro_design",
@@ -280,8 +293,8 @@ async def seed_default_nodes(
         ),
         (
             "help",
-            "Чтобы подобрать курс, который решит именно вашу задачу, напишите напрямую @BlueRise_support. Опишите ваш опыт и цель — "
-            "и вы получите персональную рекомендацию.",
+            "Чтобы подобрать курс, который решит именно вашу задачу, напишите напрямую @BlueRise_support. "
+            "Опишите ваш опыт и цель — и вы получите персональную рекомендацию.",
         ),
         (
             "support",
@@ -299,17 +312,14 @@ async def seed_default_nodes(
         (
             "partnership",
             "Привет! 👋\n\n"
-            "Этот раздел — для обсуждения профессионального партнёрства. Мы открыты к совместным проектам, интеграциям, "
-            "аффилированным программам и другим форматам взаимовыгодного сотрудничества.\n\n"
-            "Чтобы предложить свою идею, напишите напрямую @BlueRise_support в Telegram. В первом сообщении кратко опишите суть "
-            "предложения — это поможет начать диалог максимально предметно.\n\n"
+            "Этот раздел — для обсуждения профессионального партнёрства.\n\n"
+            "Чтобы предложить свою идею, напишите напрямую @BlueRise_support в Telegram. "
+            "В первом сообщении кратко опишите суть предложения — это поможет начать диалог максимально предметно.\n\n"
             "Жду вашего сообщения! 🤝",
         ),
         (
             "consult",
-            "Индивидуальный разбор вашего кейса. Мы проанализируем текущую ситуацию, определим точки роста и сформируем план "
-            "на ближайший период.\n\n"
-            "Формат и продолжительность консультации определяются под ваш запрос.\n\n"
+            "Индивидуальный разбор вашего кейса.\n\n"
             "Для записи заполните, пожалуйста, форму. Это поможет подготовиться к нашей встрече.",
         ),
     ]
@@ -322,15 +332,8 @@ async def seed_default_nodes(
             await conn.execute("UPDATE nodes SET text=$1 WHERE slug=$2", text, slug)
 
     if replace_existing:
-        # жёстко сносим кнопки всех этих узлов и пересоздаём (чтобы /repair всегда приводил к чистому состоянию)
-        await conn.execute(
-            "DELETE FROM buttons WHERE node_id = ANY($1::int[])",
-            list(node_ids.values()),
-        )
-        await conn.execute(
-            "UPDATE nodes SET text=$1 WHERE slug='root'",
-            DEFAULT_ROOT_TEXT.format(name="друг"),
-        )
+        await conn.execute("DELETE FROM buttons WHERE node_id = ANY($1::int[])", list(node_ids.values()))
+        await conn.execute("UPDATE nodes SET text=$1 WHERE slug='root'", DEFAULT_ROOT_TEXT.format(name="друг"))
 
     # ROOT
     await ensure_button(conn, root_id, "Наши курсы", "node", "courses", 1)
@@ -353,26 +356,10 @@ async def seed_default_nodes(
     await ensure_button(conn, node_ids["pre_courses"], "⬅️ Назад", "node", "courses", 4)
 
     # BEGINNER
+    course_title = "Грамотный старт на Озон"
     await ensure_button(conn, node_ids["beginner_course"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/GSO_VC", 1)
-    await ensure_button(
-        conn,
-        node_ids["beginner_course"],
-        "Выставить счет для оплаты с r/с",
-        "url",
-        tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT),
-        2,
-    )
-    await ensure_button(
-        conn,
-        node_ids["beginner_course"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(
-            SUPPORT_CONTACT,
-            "Здравствуйте! Нужна ссылка на оплату по карте или СБП для курса «Грамотный старт на Озон».",
-        ),
-        3,
-    )
+    await ensure_button(conn, node_ids["beginner_course"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["beginner_course"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["beginner_course"], "⬅️ Назад", "node", "pre_courses", 4)
 
     # ADVANCED COURSES
@@ -384,68 +371,38 @@ async def seed_default_nodes(
     await ensure_button(conn, node_ids["advanced_courses"], "⬅️ Назад", "node", "pre_courses", 6)
 
     # PRO LOGISTICS
+    course_title = "PRO логистику"
     await ensure_button(conn, node_ids["pro_logistics"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_logistics", 1)
-    await ensure_button(conn, node_ids["pro_logistics"], "Выставить счет для оплаты с r/с", "url", tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT), 2)
-    await ensure_button(
-        conn,
-        node_ids["pro_logistics"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(SUPPORT_CONTACT, "Здравствуйте! Нужна ссылка на оплату по карте или СБП для курса «PRO логистику»."),
-        3,
-    )
+    await ensure_button(conn, node_ids["pro_logistics"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["pro_logistics"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["pro_logistics"], "⬅️ Назад", "node", "advanced_courses", 4)
 
     # PRO ADS
+    course_title = "PRO рекламу"
     await ensure_button(conn, node_ids["pro_ads"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Reklamu", 1)
-    await ensure_button(conn, node_ids["pro_ads"], "Выставить счет для оплаты с r/с", "url", tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT), 2)
-    await ensure_button(
-        conn,
-        node_ids["pro_ads"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(SUPPORT_CONTACT, "Здравствуйте! Нужна ссылка на оплату по карте или СБП для курса «PRO рекламу»."),
-        3,
-    )
+    await ensure_button(conn, node_ids["pro_ads"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["pro_ads"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["pro_ads"], "⬅️ Назад", "node", "advanced_courses", 4)
 
     # PRO ANALYTICS
+    course_title = "PRO Аналитику"
     await ensure_button(conn, node_ids["pro_analytics"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Analytics", 1)
-    await ensure_button(conn, node_ids["pro_analytics"], "Выставить счет для оплаты с r/с", "url", tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT), 2)
-    await ensure_button(
-        conn,
-        node_ids["pro_analytics"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(SUPPORT_CONTACT, "Здравствуйте! Нужна ссылка на оплату по карте или СБП для курса «PRO Аналитику»."),
-        3,
-    )
+    await ensure_button(conn, node_ids["pro_analytics"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["pro_analytics"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["pro_analytics"], "⬅️ Назад", "node", "advanced_courses", 4)
 
     # PRO FINANCE
+    course_title = "PRO Финансы"
     await ensure_button(conn, node_ids["pro_finance"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_Finance", 1)
-    await ensure_button(conn, node_ids["pro_finance"], "Выставить счет для оплаты с r/с", "url", tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT), 2)
-    await ensure_button(
-        conn,
-        node_ids["pro_finance"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(SUPPORT_CONTACT, "Здравствуйте! Нужна ссылка на оплату по карте или СБП для курса «PRO Финансы»."),
-        3,
-    )
+    await ensure_button(conn, node_ids["pro_finance"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["pro_finance"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["pro_finance"], "⬅️ Назад", "node", "advanced_courses", 4)
 
     # ALL ABOUT OZON
+    course_title = "Всё про Озон"
     await ensure_button(conn, node_ids["all_about_ozon"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/all_about_ozon", 1)
-    await ensure_button(conn, node_ids["all_about_ozon"], "Выставить счет для оплаты с r/с", "url", tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT), 2)
-    await ensure_button(
-        conn,
-        node_ids["all_about_ozon"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(SUPPORT_CONTACT, "Здравствуйте! Нужна ссылка на оплату по карте или СБП для комплекта «Всё про Озон»."),
-        3,
-    )
+    await ensure_button(conn, node_ids["all_about_ozon"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["all_about_ozon"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["all_about_ozon"], "⬅️ Назад", "node", "advanced_courses", 4)
 
     # SPECIAL COURSES
@@ -454,29 +411,17 @@ async def seed_default_nodes(
     await ensure_button(conn, node_ids["special_courses"], "⬅️ Назад", "node", "pre_courses", 3)
 
     # PRO DESIGN
+    course_title = "PRO Дизайн"
     await ensure_button(conn, node_ids["pro_design"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/PRO_design", 1)
-    await ensure_button(conn, node_ids["pro_design"], "Выставить счет для оплаты с r/с", "url", tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT), 2)
-    await ensure_button(
-        conn,
-        node_ids["pro_design"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(SUPPORT_CONTACT, "Здравствуйте! Нужна ссылка на оплату по карте или СБП для курса «PRO Дизайн»."),
-        3,
-    )
+    await ensure_button(conn, node_ids["pro_design"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["pro_design"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["pro_design"], "⬅️ Назад", "node", "special_courses", 4)
 
     # SXR AI
+    course_title = "Нейросети от SXR Studio"
     await ensure_button(conn, node_ids["sxr_ai"], "Узнать подробности и купить курс", "url", "https://bluerise.getcourse.ru/SXR_AI", 1)
-    await ensure_button(conn, node_ids["sxr_ai"], "Выставить счет для оплаты с r/с", "url", tg_link(SUPPORT_CONTACT, BILLING_PREFILL_TEXT), 2)
-    await ensure_button(
-        conn,
-        node_ids["sxr_ai"],
-        PAYLINK_BUTTON_LABEL,
-        "url",
-        tg_link(SUPPORT_CONTACT, "Здравствуйте! Нужна ссылка на оплату по карте или СБП для курса «Нейросети от SXR Studio»."),
-        3,
-    )
+    await ensure_button(conn, node_ids["sxr_ai"], BILL_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, bill_prefill(course_title)), 2)
+    await ensure_button(conn, node_ids["sxr_ai"], PAYLINK_BUTTON_LABEL, "url", tg_link(SUPPORT_CONTACT, paylink_prefill(course_title)), 3)
     await ensure_button(conn, node_ids["sxr_ai"], "⬅️ Назад", "node", "special_courses", 4)
 
     # NEW COURSES
@@ -493,18 +438,18 @@ async def seed_default_nodes(
     await ensure_button(conn, node_ids["help"], "Написать в поддержку", "url", tg_link(SUPPORT_CONTACT, "Добрый день. Помогите с выбором курса."), 1)
     await ensure_button(conn, node_ids["help"], "⬅️ Назад", "node", "courses", 2)
 
-    await ensure_button(
-        conn,
-        node_ids["support"],
-        "Написать в поддержку",
-        "url",
-        tg_link(SUPPORT_CONTACT, "Добрый день. Возникла техническая проблема: [опишите, пожалуйста]."),
-        1,
-    )
+    await ensure_button(conn, node_ids["support"], "Написать в поддержку", "url", tg_link(SUPPORT_CONTACT, "Добрый день. Возникла техническая проблема: (опишите, пожалуйста)."), 1)
     await ensure_button(conn, node_ids["support"], "⬅️ Назад", "node", "courses", 2)
 
     # CALCULATOR
-    await ensure_button(conn, node_ids["calculator"], "Калькулятор здесь", "url", "https://docs.google.com/spreadsheets/d/1e4AVf3dDueEoPxQHeKOVFHgSpbcLvnbGnn6_I6ApRwg/edit?gid=246238448#gid=246238448", 1)
+    await ensure_button(
+        conn,
+        node_ids["calculator"],
+        "Калькулятор здесь",
+        "url",
+        "https://docs.google.com/spreadsheets/d/1e4AVf3dDueEoPxQHeKOVFHgSpbcLvnbGnn6_I6ApRwg/edit?gid=246238448#gid=246238448",
+        1,
+    )
     await ensure_button(conn, node_ids["calculator"], "Подписаться на канал", "url", CHANNEL_URL, 2)
     await ensure_button(conn, node_ids["calculator"], "⬅️ Назад", "node", "root", 3)
 
@@ -518,12 +463,7 @@ async def seed_default_nodes(
 
 
 async def migrate_support_contacts(conn: asyncpg.Connection) -> None:
-    """
-    Меняет в ТЕКСТАХ:
-    - @yashiann / @ilya_bolsheglazov -> @BlueRise_support
-    - t.me/yashiann / https://t.me/yashiann -> BlueRise_support (и аналогично второй)
-    """
-    # @username
+    # В текстах узлов: @old -> @new
     await conn.execute(
         """
         UPDATE nodes
@@ -540,7 +480,7 @@ async def migrate_support_contacts(conn: asyncpg.Connection) -> None:
         SUPPORT_CONTACT,
     )
 
-    # t.me/username и https://t.me/username
+    # В текстах узлов: t.me/old -> t.me/new
     for legacy in LEGACY_SUPPORT_HANDLES:
         await conn.execute(
             """
@@ -557,6 +497,22 @@ async def migrate_support_contacts(conn: asyncpg.Connection) -> None:
             SUPPORT_CONTACT,
         )
 
+    # В targets кнопок: t.me/old -> t.me/new (на всякий)
+    for legacy in LEGACY_SUPPORT_HANDLES:
+        await conn.execute(
+            """
+            UPDATE buttons
+            SET target = replace(
+                replace(target, 'https://t.me/' || $1, 'https://t.me/' || $2),
+                't.me/' || $1,
+                't.me/' || $2
+            )
+            WHERE target LIKE '%' || $1 || '%'
+            """,
+            legacy,
+            SUPPORT_CONTACT,
+        )
+
 
 async def migrate_text_typos(conn: asyncpg.Connection) -> None:
     await conn.execute(
@@ -568,10 +524,35 @@ async def migrate_text_typos(conn: asyncpg.Connection) -> None:
     )
 
 
+async def normalize_buttons(conn: asyncpg.Connection) -> None:
+    """
+    На случай, если в базе были старые названия/вариации:
+    - "Запросить ссылку на оплату" -> новое имя
+    - разные варианты "Выставить счет..." -> единое имя
+    """
+    await conn.execute(
+        """
+        UPDATE buttons
+        SET label = $1
+        WHERE label IN ('Запросить ссылку на оплату', 'Запросить ссылку на оплату по карте или СБП')
+        """,
+        PAYLINK_BUTTON_LABEL,
+    )
+
+    await conn.execute(
+        """
+        UPDATE buttons
+        SET label = $1
+        WHERE label IN ('Выставить счет для оплаты с r/с', 'Выставить счет для оплаты с р/с', 'Выставить счет для оплаты с р/с ')
+        """,
+        BILL_BUTTON_LABEL,
+    )
+
+
 async def dedupe_buttons(conn: asyncpg.Connection) -> None:
     """
-    Удаляем дубли кнопок:
-    - по (node_id, label, action_type, target)
+    Удаляем дубли по (node_id, label) — оставляем самую раннюю запись.
+    Это нужно, чтобы можно было создать UNIQUE индекс.
     """
     await conn.execute(
         """
@@ -581,35 +562,15 @@ async def dedupe_buttons(conn: asyncpg.Connection) -> None:
             FROM (
                 SELECT id,
                        row_number() OVER (
-                           PARTITION BY node_id, label, action_type, target
+                           PARTITION BY node_id, label
                            ORDER BY id
                        ) AS rn
                 FROM buttons
-            ) AS d
-            WHERE d.rn > 1
+            ) t
+            WHERE t.rn > 1
         )
         """
     )
-
-    # Плюс: на всякий случай чиню старые t.me/ ссылки в targets (и https://t.me/ тоже)
-    for legacy in LEGACY_SUPPORT_HANDLES:
-        await conn.execute(
-            """
-            UPDATE buttons
-            SET target = replace(
-                replace(
-                    replace(target, 'https://t.me/' || $1, 'https://t.me/' || $2),
-                    't.me/' || $1,
-                    't.me/' || $2
-                ),
-                '@' || $1,
-                '@' || $2
-            )
-            WHERE target LIKE '%' || $1 || '%'
-            """,
-            legacy,
-            SUPPORT_CONTACT,
-        )
 
 
 async def fetch_node(slug: str) -> Optional[Node]:
@@ -736,10 +697,10 @@ async def cb_node(c: CallbackQuery) -> None:
 
 @dp.message(F.text == "/admin")
 async def admin_help(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     await m.answer(
-        "Админ-режим. Выберите действие или используйте команды ниже:\n"
+        "Админ-режим.\n"
         "/nodes — список разделов\n"
         "/node <slug> — показать раздел и кнопки\n"
         "/addnode <slug> <text> — создать раздел\n"
@@ -748,35 +709,40 @@ async def admin_help(m: Message) -> None:
         "/addbtn <slug> <label> | <node:slug|url:https://...> | [position]\n"
         "/setbtn <id> <label> | <node:slug|url:https://...> | [position]\n"
         "/delbtn <id> — удалить кнопку\n\n"
-        "Чтобы выйти из пошагового режима: /cancel",
+        "Выход из пошагового режима: /cancel",
         reply_markup=admin_reply_kb(),
     )
 
 
 @dp.message(F.text == "/repair")
 async def repair_seed(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     assert POOL is not None
     async with POOL.acquire() as conn:
         root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT.format(name="друг"))
+
+        # Важно: перед /repair — опять же дедуп и индекс (на случай, если база старая)
+        await dedupe_buttons(conn)
+        await conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_buttons_node_label
+            ON buttons (node_id, label);
+            """
+        )
+
         await seed_default_nodes(conn, root_id, replace_existing=True)
         await migrate_support_contacts(conn)
         await migrate_text_typos(conn)
+        await normalize_buttons(conn)
         await dedupe_buttons(conn)
-        # гарантируем индекс (после дедупа он точно создастся)
-        await conn.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_buttons_node_label_action_target
-            ON buttons (node_id, label, action_type, target);
-            """
-        )
-    await m.answer("Структура восстановлена. Попробуйте снова открыть раздел.")
+
+    await m.answer("Структура восстановлена. Откройте раздел заново.")
 
 
 @dp.message(F.text == "/cancel")
 async def cancel_flow(m: Message, state: FSMContext) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     await state.clear()
     await m.answer("Готово, сбросила шаги.", reply_markup=ReplyKeyboardRemove())
@@ -785,7 +751,7 @@ async def cancel_flow(m: Message, state: FSMContext) -> None:
 @dp.message(F.text == "📄 Разделы")
 @dp.message(F.text == "/nodes")
 async def list_nodes(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     assert POOL is not None
     async with POOL.acquire() as conn:
@@ -798,7 +764,7 @@ async def list_nodes(m: Message) -> None:
 
 @dp.message(F.text.startswith("/node "))
 async def show_node(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     slug = m.text.split(maxsplit=1)[1].strip()
     node = await fetch_node(slug)
@@ -819,7 +785,7 @@ async def show_node(m: Message) -> None:
 
 @dp.message(F.text.startswith("/addnode "))
 async def add_node(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     parts = m.text.split(maxsplit=2)
     if len(parts) < 3:
@@ -838,7 +804,7 @@ async def add_node(m: Message) -> None:
 
 @dp.message(F.text.startswith("/delnode "))
 async def del_node(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     slug = m.text.split(maxsplit=1)[1].strip()
     if slug == "root":
@@ -855,7 +821,7 @@ async def del_node(m: Message) -> None:
 
 @dp.message(F.text.startswith("/settext "))
 async def set_text(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     parts = m.text.split(maxsplit=2)
     if len(parts) < 3:
@@ -887,7 +853,7 @@ def parse_button_payload(raw: str) -> Optional[tuple[str, str, str, Optional[int
 
 @dp.message(F.text.startswith("/addbtn "))
 async def add_btn(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     raw = m.text[len("/addbtn ") :].strip()
     slug_split = raw.split(" ", 1)
@@ -912,24 +878,14 @@ async def add_btn(m: Message) -> None:
                 await m.answer("Целевой раздел не найден.")
                 return
 
-        await conn.execute(
-            """
-            INSERT INTO buttons (node_id, label, action_type, target, position)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (node_id, label, action_type, target) DO NOTHING
-            """,
-            node_id,
-            label,
-            action_type,
-            target,
-            position or 0,
-        )
-    await m.answer("Кнопка добавлена.")
+        await ensure_button(conn, node_id, label, action_type, target, position or 0)
+
+    await m.answer("Кнопка добавлена/обновлена.")
 
 
 @dp.message(F.text.startswith("/setbtn "))
 async def set_btn(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     raw = m.text[len("/setbtn ") :].strip()
     parts = raw.split(" ", 1)
@@ -969,7 +925,7 @@ async def set_btn(m: Message) -> None:
 
 @dp.message(F.text.startswith("/delbtn "))
 async def del_btn(m: Message) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     parts = m.text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].isdigit():
@@ -987,7 +943,7 @@ async def del_btn(m: Message) -> None:
 
 @dp.message(F.text == "❌ Сброс")
 async def admin_reset_text(m: Message, state: FSMContext) -> None:
-    if not is_owner(m.from_user.id):
+    if not m.from_user or not is_owner(m.from_user.id):
         return
     await state.clear()
     await m.answer("Готово, сбросила шаги.", reply_markup=ReplyKeyboardRemove())
@@ -1028,4 +984,5 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
