@@ -25,8 +25,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+BOT_TOKEN = (os.getenv("BOT_TOKEN", "") or "").strip()
+DATABASE_URL = (os.getenv("DATABASE_URL", "") or "").strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 
 CHANNEL_URL = "https://t.me/ozonbluerise"
@@ -161,16 +161,35 @@ async def init_db() -> None:
         )
 
         # 3) гарантируем root + структуру
-        root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT.format(name="друг"))
+        root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT)
         await seed_default_nodes(conn, root_id)
 
         # 4) миграции текстов/ссылок (и в nodes, и в buttons)
         await migrate_support_contacts(conn)
         await migrate_text_typos(conn)
+
+        # 4.1) если раньше root сохранялся уже форматированным ("друг"), аккуратно починим на шаблон
+        await fix_root_placeholder_if_needed(conn)
+
+        # 4.2) нормализуем кнопки безопасно (без падения на UNIQUE)
         await normalize_buttons(conn)
 
         # 5) финальный дедуп на всякий
         await dedupe_buttons(conn)
+
+
+async def fix_root_placeholder_if_needed(conn: asyncpg.Connection) -> None:
+    """
+    Раньше root мог сохраниться как DEFAULT_ROOT_TEXT.format(name="друг"),
+    из-за этого персонализация имени не работала.
+    Исправляем ТОЛЬКО если текст совпадает с дефолтным форматированным вариантом.
+    """
+    existing = await conn.fetchval("SELECT text FROM nodes WHERE slug='root'")
+    if not existing:
+        return
+    formatted_default = DEFAULT_ROOT_TEXT.format(name="друг")
+    if existing == formatted_default:
+        await conn.execute("UPDATE nodes SET text=$1 WHERE slug='root'", DEFAULT_ROOT_TEXT)
 
 
 async def ensure_node(conn: asyncpg.Connection, slug: str, text: str) -> int:
@@ -333,7 +352,7 @@ async def seed_default_nodes(
 
     if replace_existing:
         await conn.execute("DELETE FROM buttons WHERE node_id = ANY($1::int[])", list(node_ids.values()))
-        await conn.execute("UPDATE nodes SET text=$1 WHERE slug='root'", DEFAULT_ROOT_TEXT.format(name="друг"))
+        await conn.execute("UPDATE nodes SET text=$1 WHERE slug='root'", DEFAULT_ROOT_TEXT)
 
     # ROOT
     await ensure_button(conn, root_id, "Наши курсы", "node", "courses", 1)
@@ -526,10 +545,21 @@ async def migrate_text_typos(conn: asyncpg.Connection) -> None:
 
 async def normalize_buttons(conn: asyncpg.Connection) -> None:
     """
-    На случай, если в базе были старые названия/вариации:
-    - "Запросить ссылку на оплату" -> новое имя
-    - разные варианты "Выставить счет..." -> единое имя
+    Безопасная нормализация label'ов без падения на UNIQUE (node_id, label).
     """
+    # --- PAYLINK: если в одном node_id уже есть "новая" кнопка, удаляем старую, чтобы UPDATE не упал ---
+    await conn.execute(
+        """
+        DELETE FROM buttons old
+        USING buttons new
+        WHERE old.node_id = new.node_id
+          AND old.label = 'Запросить ссылку на оплату'
+          AND new.label = $1
+        """,
+        PAYLINK_BUTTON_LABEL,
+    )
+
+    # теперь безопасно переименовываем оставшиеся старые варианты в новый label
     await conn.execute(
         """
         UPDATE buttons
@@ -539,20 +569,39 @@ async def normalize_buttons(conn: asyncpg.Connection) -> None:
         PAYLINK_BUTTON_LABEL,
     )
 
+    # --- BILL ---
+    old_bill_labels = [
+        "Выставить счет для оплаты с r/с",
+        "Выставить счет для оплаты с р/с",
+        "Выставить счет для оплаты с р/с ",
+    ]
+
+    await conn.execute(
+        """
+        DELETE FROM buttons old
+        USING buttons new
+        WHERE old.node_id = new.node_id
+          AND old.label = ANY($1::text[])
+          AND new.label = $2
+        """,
+        old_bill_labels,
+        BILL_BUTTON_LABEL,
+    )
+
     await conn.execute(
         """
         UPDATE buttons
         SET label = $1
-        WHERE label IN ('Выставить счет для оплаты с r/с', 'Выставить счет для оплаты с р/с', 'Выставить счет для оплаты с р/с ')
+        WHERE label = ANY($2::text[])
         """,
         BILL_BUTTON_LABEL,
+        old_bill_labels,
     )
 
 
 async def dedupe_buttons(conn: asyncpg.Connection) -> None:
     """
     Удаляем дубли по (node_id, label) — оставляем самую раннюю запись.
-    Это нужно, чтобы можно было создать UNIQUE индекс.
     """
     await conn.execute(
         """
@@ -670,6 +719,7 @@ async def start(m: Message) -> None:
     if not node:
         await m.answer("Меню ещё не настроено.")
         return
+    # теперь root хранится с {name} и персонализация работает
     text = node.text.replace("{name}", name)
     buttons = await fetch_buttons("root")
     await m.answer(text, reply_markup=build_root_reply_kb(buttons))
@@ -720,7 +770,7 @@ async def repair_seed(m: Message) -> None:
         return
     assert POOL is not None
     async with POOL.acquire() as conn:
-        root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT.format(name="друг"))
+        root_id = await ensure_node(conn, "root", DEFAULT_ROOT_TEXT)
 
         # Важно: перед /repair — опять же дедуп и индекс (на случай, если база старая)
         await dedupe_buttons(conn)
@@ -838,12 +888,14 @@ async def set_text(m: Message) -> None:
 
 
 def parse_button_payload(raw: str) -> Optional[tuple[str, str, str, Optional[int]]]:
+    # FIX: позиция реально опциональна
     parts = [part.strip() for part in raw.split("|")]
-    if len(parts) < 3:
+    if len(parts) < 2:
         return None
     label = parts[0]
     target_raw = parts[1]
-    position = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+    position = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
+
     if target_raw.startswith("node:"):
         return (label, "node", target_raw[5:], position)
     if target_raw.startswith("url:"):
@@ -984,5 +1036,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 
